@@ -28,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -42,6 +43,25 @@ import com.google.android.gms.location.Priority
 import kotlinx.coroutines.delay
 import pl.pam.startproject.ui.theme.StartProjectTheme
 import java.util.Locale
+
+private val QUARTER_MILE_METERS = (1609.344 / 4.0).toFloat()
+
+private data class DistanceOption(val meters: Float, val label: String)
+
+private val distanceOptions = listOf(
+    DistanceOption(100f, "100 m"),
+    DistanceOption(500f, "500 m"),
+    DistanceOption(1000f, "1 km"),
+    DistanceOption(QUARTER_MILE_METERS, "1/4 mili"),
+)
+
+private val speedTargetOptions = listOf(50f, 75f, 100f, 120f)
+
+/** Aktualny preset pomiaru: albo próg dystansu, albo próg prędkości (0→X). */
+private sealed class MeasurePreset {
+    data class Distance(val meters: Float, val label: String) : MeasurePreset()
+    data class SpeedAccel(val targetKmh: Float) : MeasurePreset()
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,7 +96,13 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
     var distanceMeters by remember { mutableStateOf(0f) }
     var speedKmh by remember { mutableStateOf(0f) }
     var previousLocation by remember { mutableStateOf<Location?>(null) }
-    var selectedMode by remember { mutableStateOf("1 km") }
+    var preset by remember {
+        mutableStateOf<MeasurePreset>(
+            MeasurePreset.Distance(1000f, "1 km")
+        )
+    }
+    val presetState = rememberUpdatedState(preset)
+    val finishMeasurement = rememberUpdatedState { isMeasuring = false }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -91,10 +117,24 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
             override fun onLocationResult(result: LocationResult) {
                 val latest = result.lastLocation ?: return
                 speedKmh = latest.speed * 3.6f
+                var newDistance = distanceMeters
                 previousLocation?.let { previous ->
-                    distanceMeters += previous.distanceTo(latest)
+                    newDistance += previous.distanceTo(latest)
                 }
+                distanceMeters = newDistance
                 previousLocation = latest
+                when (val p = presetState.value) {
+                    is MeasurePreset.Distance -> {
+                        if (newDistance >= p.meters) {
+                            finishMeasurement.value.invoke()
+                        }
+                    }
+                    is MeasurePreset.SpeedAccel -> {
+                        if (speedKmh >= p.targetKmh) {
+                            finishMeasurement.value.invoke()
+                        }
+                    }
+                }
             }
         }
     }
@@ -145,14 +185,16 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        ModeSelector(
-            selectedMode = selectedMode,
-            onModeSelected = { mode -> selectedMode = mode }
+        MeasurePresetSelector(
+            preset = preset,
+            onPresetChange = { preset = it },
+            enabled = !isMeasuring
         )
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Tryb: $selectedMode")
+                Text(text = measurePresetSummary(preset))
+                Text(text = autoStopGoalDescription(preset))
                 Text("Czas: ${formatElapsedTime(elapsedTimeMs)}")
                 Text("Prędkość: ${"%.1f".format(Locale.US, speedKmh)} km/h")
                 Text("Dystans: ${"%.1f".format(Locale.US, distanceMeters)} m")
@@ -180,18 +222,155 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ModeSelector(selectedMode: String, onModeSelected: (String) -> Unit) {
-    val modes = listOf("1 km", "1/4 mili", "0-100 km/h")
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        modes.forEach { mode ->
+private fun MeasurePresetSelector(
+    preset: MeasurePreset,
+    onPresetChange: (MeasurePreset) -> Unit,
+    enabled: Boolean
+) {
+    val isDistance = preset is MeasurePreset.Distance
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Rodzaj pomiaru", style = MaterialTheme.typography.titleSmall)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             Button(
-                onClick = { onModeSelected(mode) },
-                enabled = selectedMode != mode
+                onClick = {
+                    onPresetChange(MeasurePreset.Distance(1000f, "1 km"))
+                },
+                modifier = Modifier.weight(1f),
+                enabled = enabled && !isDistance
             ) {
-                Text(mode)
+                Text("Dystans")
+            }
+            Button(
+                onClick = {
+                    onPresetChange(MeasurePreset.SpeedAccel(100f))
+                },
+                modifier = Modifier.weight(1f),
+                enabled = enabled && isDistance
+            ) {
+                Text("Przyspieszenie")
+            }
+        }
+
+        when (val p = preset) {
+            is MeasurePreset.Distance -> {
+                Text("Wybór dystansu", style = MaterialTheme.typography.titleSmall)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        distanceOptions.take(2).forEach { opt ->
+                            DistanceOptionButton(
+                                option = opt,
+                                current = p,
+                                enabled = enabled,
+                                onSelect = onPresetChange,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        distanceOptions.drop(2).forEach { opt ->
+                            DistanceOptionButton(
+                                option = opt,
+                                current = p,
+                                enabled = enabled,
+                                onSelect = onPresetChange,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
+            is MeasurePreset.SpeedAccel -> {
+                Text("Docelowa prędkość (0 → X)", style = MaterialTheme.typography.titleSmall)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        speedTargetOptions.take(2).forEach { kmh ->
+                            SpeedTargetButton(
+                                targetKmh = kmh,
+                                current = p,
+                                enabled = enabled,
+                                onSelect = onPresetChange,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        speedTargetOptions.drop(2).forEach { kmh ->
+                            SpeedTargetButton(
+                                targetKmh = kmh,
+                                current = p,
+                                enabled = enabled,
+                                onSelect = onPresetChange,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
+}
+
+@Composable
+private fun DistanceOptionButton(
+    option: DistanceOption,
+    current: MeasurePreset.Distance,
+    enabled: Boolean,
+    onSelect: (MeasurePreset) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val selected = current.label == option.label
+    Button(
+        onClick = { onSelect(MeasurePreset.Distance(option.meters, option.label)) },
+        enabled = enabled && !selected,
+        modifier = modifier
+    ) {
+        Text(option.label)
+    }
+}
+
+@Composable
+private fun SpeedTargetButton(
+    targetKmh: Float,
+    current: MeasurePreset.SpeedAccel,
+    enabled: Boolean,
+    onSelect: (MeasurePreset) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val selected = current.targetKmh == targetKmh
+    Button(
+        onClick = { onSelect(MeasurePreset.SpeedAccel(targetKmh)) },
+        enabled = enabled && !selected,
+        modifier = modifier
+    ) {
+        Text("${targetKmh.toInt()} km/h")
+    }
+}
+
+private fun measurePresetSummary(preset: MeasurePreset): String = when (preset) {
+    is MeasurePreset.Distance -> "Tryb: dystans — ${preset.label}"
+    is MeasurePreset.SpeedAccel -> "Tryb: przyspieszenie — 0–${preset.targetKmh.toInt()} km/h"
+}
+
+private fun autoStopGoalDescription(preset: MeasurePreset): String = when (preset) {
+    is MeasurePreset.Distance ->
+        "Cel: ${preset.label} (${"%.1f".format(Locale.US, preset.meters)} m), auto-stop po dystansie"
+    is MeasurePreset.SpeedAccel ->
+        "Cel: ≥ ${preset.targetKmh.toInt()} km/h (auto-stop po prędkości)"
 }
 
 private fun formatElapsedTime(ms: Long): String {
