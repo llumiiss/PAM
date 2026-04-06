@@ -20,16 +20,19 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
@@ -46,6 +49,12 @@ import java.util.Locale
 
 private val QUARTER_MILE_METERS = (1609.344 / 4.0).toFloat()
 
+/** Minimalny dystans od punktu uzbrojenia, by uznać „ruszenie” (redukcja fałszywych startów przy dryfie GPS). */
+private const val MOTION_MIN_DISPLACEMENT_M = 4f
+
+/** Minimalna prędkość z GPS (m/s), gdy [Location.hasSpeed] — ok. 3,2 km/h. */
+private const val MOTION_MIN_SPEED_MS = 0.9f
+
 private data class DistanceOption(val meters: Float, val label: String)
 
 private val distanceOptions = listOf(
@@ -56,6 +65,21 @@ private val distanceOptions = listOf(
 )
 
 private val speedTargetOptions = listOf(50f, 75f, 100f, 120f)
+
+private enum class StartStrategy {
+    /** Po Start: 5→1 (co 1 s), potem od razu pomiar (GPS + stoper). */
+    CountdownThenMeasure,
+
+    /** Po Start: uzbrojenie; pomiar dopiero po pierwszym ruchu wg GPS. */
+    ArmedWaitForMotion,
+}
+
+private enum class RunPhase {
+    Idle,
+    Countdown,
+    Armed,
+    Running,
+}
 
 /** Aktualny preset pomiaru: albo próg dystansu, albo próg prędkości (0→X). */
 private sealed class MeasurePreset {
@@ -91,18 +115,29 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
             ) == PackageManager.PERMISSION_GRANTED
         )
     }
-    var isMeasuring by remember { mutableStateOf(false) }
+    var runPhase by remember { mutableStateOf(RunPhase.Idle) }
+    var startStrategy by remember { mutableStateOf(StartStrategy.CountdownThenMeasure) }
+    var countdownTick by remember { mutableIntStateOf(0) }
+
     var elapsedTimeMs by remember { mutableLongStateOf(0L) }
     var distanceMeters by remember { mutableStateOf(0f) }
     var speedKmh by remember { mutableStateOf(0f) }
     var previousLocation by remember { mutableStateOf<Location?>(null) }
+    var armedAnchor by remember { mutableStateOf<Location?>(null) }
+
     var preset by remember {
         mutableStateOf<MeasurePreset>(
             MeasurePreset.Distance(1000f, "1 km")
         )
     }
     val presetState = rememberUpdatedState(preset)
-    val finishMeasurement = rememberUpdatedState { isMeasuring = false }
+    val runPhaseState = rememberUpdatedState(runPhase)
+    val runPhaseForTimer = rememberUpdatedState(runPhase)
+    val finishSession = rememberUpdatedState {
+        runPhase = RunPhase.Idle
+        armedAnchor = null
+        countdownTick = 0
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -112,10 +147,39 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
             permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
     }
 
+    fun resetMeasurementBaselines() {
+        elapsedTimeMs = 0L
+        distanceMeters = 0f
+        speedKmh = 0f
+        previousLocation = null
+    }
+
     val locationCallback = remember {
         object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val latest = result.lastLocation ?: return
+                val phase = runPhaseState.value
+
+                if (phase == RunPhase.Armed) {
+                    speedKmh = latest.speed * 3.6f
+                    val anchor = armedAnchor
+                    if (anchor == null) {
+                        armedAnchor = latest
+                    } else {
+                        val movedFar = anchor.distanceTo(latest) >= MOTION_MIN_DISPLACEMENT_M
+                        val fastEnough = latest.hasSpeed() && latest.speed >= MOTION_MIN_SPEED_MS
+                        if (movedFar || fastEnough) {
+                            runPhase = RunPhase.Running
+                            resetMeasurementBaselines()
+                            speedKmh = latest.speed * 3.6f
+                            previousLocation = latest
+                        }
+                    }
+                    return
+                }
+
+                if (phase != RunPhase.Running) return
+
                 speedKmh = latest.speed * 3.6f
                 var newDistance = distanceMeters
                 previousLocation?.let { previous ->
@@ -126,12 +190,12 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
                 when (val p = presetState.value) {
                     is MeasurePreset.Distance -> {
                         if (newDistance >= p.meters) {
-                            finishMeasurement.value.invoke()
+                            finishSession.value.invoke()
                         }
                     }
                     is MeasurePreset.SpeedAccel -> {
                         if (speedKmh >= p.targetKmh) {
-                            finishMeasurement.value.invoke()
+                            finishSession.value.invoke()
                         }
                     }
                 }
@@ -139,15 +203,30 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    LaunchedEffect(isMeasuring) {
-        while (isMeasuring) {
+    LaunchedEffect(runPhase) {
+        if (runPhase != RunPhase.Countdown) return@LaunchedEffect
+        for (i in 5 downTo 1) {
+            countdownTick = i
+            delay(1000L)
+            if (runPhaseState.value != RunPhase.Countdown) return@LaunchedEffect
+        }
+        countdownTick = 0
+        if (runPhaseState.value == RunPhase.Countdown) {
+            resetMeasurementBaselines()
+            runPhase = RunPhase.Running
+        }
+    }
+
+    LaunchedEffect(runPhase) {
+        while (runPhaseForTimer.value == RunPhase.Running) {
             delay(100L)
             elapsedTimeMs += 100L
         }
     }
 
-    DisposableEffect(isMeasuring, hasLocationPermission) {
-        if (!hasLocationPermission || !isMeasuring) {
+    val needsGps = runPhase == RunPhase.Armed || runPhase == RunPhase.Running
+    DisposableEffect(needsGps, hasLocationPermission) {
+        if (!hasLocationPermission || !needsGps) {
             onDispose { }
         } else {
             val request = LocationRequest.Builder(
@@ -160,6 +239,9 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
             }
         }
     }
+
+    val sessionActive = runPhase != RunPhase.Idle
+    val idle = runPhase == RunPhase.Idle
 
     Column(
         modifier = modifier
@@ -185,16 +267,35 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
             }
         }
 
+        StartStrategyRow(
+            strategy = startStrategy,
+            onStrategyChange = { startStrategy = it },
+            enabled = idle
+        )
+
         MeasurePresetSelector(
             preset = preset,
             onPresetChange = { preset = it },
-            enabled = !isMeasuring
+            enabled = idle
         )
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(text = measurePresetSummary(preset))
                 Text(text = autoStopGoalDescription(preset))
+                when (runPhase) {
+                    RunPhase.Countdown ->
+                        Text(
+                            text = "Start za: $countdownTick",
+                            style = MaterialTheme.typography.headlineMedium
+                        )
+                    RunPhase.Armed ->
+                        Text(
+                            text = "Uzbrojono — czekam na pierwszy ruch (GPS)…",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    else -> { }
+                }
                 Text("Czas: ${formatElapsedTime(elapsedTimeMs)}")
                 Text("Prędkość: ${"%.1f".format(Locale.US, speedKmh)} km/h")
                 Text("Dystans: ${"%.1f".format(Locale.US, distanceMeters)} m")
@@ -203,20 +304,70 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(
-                enabled = hasLocationPermission && !isMeasuring,
+                enabled = hasLocationPermission && idle,
                 onClick = {
-                    isMeasuring = true
-                    elapsedTimeMs = 0L
-                    distanceMeters = 0f
-                    speedKmh = 0f
-                    previousLocation = null
+                    when (startStrategy) {
+                        StartStrategy.CountdownThenMeasure -> {
+                            resetMeasurementBaselines()
+                            runPhase = RunPhase.Countdown
+                            countdownTick = 5
+                        }
+                        StartStrategy.ArmedWaitForMotion -> {
+                            armedAnchor = null
+                            resetMeasurementBaselines()
+                            runPhase = RunPhase.Armed
+                        }
+                    }
                 }
             ) { Text("Start") }
 
             Button(
-                enabled = isMeasuring,
-                onClick = { isMeasuring = false }
+                enabled = sessionActive,
+                onClick = { finishSession.value.invoke() }
             ) { Text("Stop") }
+        }
+    }
+}
+
+@Composable
+private fun StartStrategyRow(
+    strategy: StartStrategy,
+    onStrategyChange: (StartStrategy) -> Unit,
+    enabled: Boolean
+) {
+    val countdownSelected = strategy == StartStrategy.CountdownThenMeasure
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Strategia startu", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = if (countdownSelected) {
+                    "5→1, potem od razu pomiar (GPS + stoper)"
+                } else {
+                    "Uzbrojenie — pomiar od pierwszego ruchu GPS"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = if (countdownSelected) "5→1" else "Ruch",
+                style = MaterialTheme.typography.labelMedium
+            )
+            Switch(
+                checked = countdownSelected,
+                onCheckedChange = { checked ->
+                    onStrategyChange(
+                        if (checked) StartStrategy.CountdownThenMeasure
+                        else StartStrategy.ArmedWaitForMotion
+                    )
+                },
+                enabled = enabled
+            )
         }
     }
 }
