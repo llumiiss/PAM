@@ -1,0 +1,65 @@
+================================================================================
+PAM — baza MySQL pod phpMyAdmin (localhost) — krótka instrukcja
+================================================================================
+
+1) Czym to jest
+   - phpMyAdmin obsługuje MySQL/MariaDB, NIE plik Room/SQLite z telefonu.
+   - Pliki w folderze database/mysql/ tworzą tę samą LOGICZNĄ strukturę danych
+     co plan Etapu 3 (data, tryb, prędkość, czas, dystans), ale na serwerze PC.
+
+2) Sposób A — Docker (zalecane, jedna komenda)
+   - Zainstaluj Docker Desktop (Windows).
+   - PowerShell / CMD:
+       cd C:\Users\Lumis\StudioProjects\PAM\database
+       docker compose up -d --build
+   - Poczekaj ~30–60 s na pierwszy start MySQL (MySQL + phpMyAdmin + API).
+   - Przeglądarka: http://localhost:8080
+   - Logowanie phpMyAdmin:
+       Serwer: (zostaw domyślny / mysql)
+       Użytkownik: root
+       Hasło: pam_root_dev
+   - Po lewej wybierz bazę „pam”, tabela „measurement_attempts”.
+   - Przykładowe 3 wiersze pochodzą z pliku 02_seed.sql (tylko przy pierwszym
+     utworzeniu wolumenu; aby wyczyścić i zaimportować od zera:
+       docker compose down -v
+       docker compose up -d --build
+
+3) Sposób B — XAMPP (bez Dockera)
+   - Uruchom Apache + MySQL w panelu XAMPP.
+   - http://localhost/phpmyadmin — użytkownik root (hasło jak ustawiłeś w XAMPP).
+   - Zakładka „Import” → wybierz plik:
+       database/mysql/01_schema.sql
+     potem opcjonalnie:
+       database/mysql/02_seed.sql
+   - Albo: SQL → wklej zawartość 01_schema.sql i wykonaj.
+
+4) Jak PRZEGLĄDAĆ i EDYTOWAĆ w phpMyAdmin
+   - Przegląd: baza pam → tabela measurement_attempts → „Przegląd”.
+   - Edycja pojedynczego wiersza: ikona „Edytuj” przy wierszu lub zakładka
+     „Wstaw” dla nowego rekordu.
+   - measured_at: data i czas próby (możesz zmienić ręcznie).
+   - measure_type: tylko wartości 'distance' lub 'speed_accel' (ENUM).
+   - mode_label: dowolny tekst, np. „1 km”, „0–100 km/h”.
+   - max_speed_kmh: liczba dziesiętna (np. 103.40).
+   - duration_ms: czas w milisekundach (BIGINT).
+   - distance_m: dystans w metrach (DECIMAL).
+
+5) API synchronizacji (Node.js → MySQL) — kontener „api”
+   - Po „docker compose up -d --build” backend: http://localhost:8090/health
+   - Endpoint zapisu próby: POST http://localhost:8090/api/attempts (JSON camelCase,
+     pola jak w aplikacji: measuredAtEpochMs, measureType, modeLabel, startStrategy,
+     maxSpeedKmh, durationMs, distanceM).
+   - Aplikacja Android po zapisie w Room automatycznie wywołuje ten endpoint
+     (BuildConfig.SYNC_BASE_URL domyślnie http://10.0.2.2:8090/ dla emulatora).
+   - Telefon fizyczny: w app/build.gradle.kts ustaw SYNC_BASE_URL na
+     http://TWOJE_IP_LAN:8090/ oraz dopisz ten adres w
+     app/src/main/res/xml/network_security_config.xml (cleartext HTTP) albo użyj HTTPS.
+
+6) Bezpieczeństwo
+   - Hasła w docker-compose.yml są TYLKO na lokalny development.
+   - Nie commituj produkcyjnych haseł; na serwerze użyj zmiennych środowiskowych.
+
+7) Logi synchronizacji w Androidzie (tag: MeasurementSync)
+   - Błąd sieci nie cofa zapisu w Room — wpis zostaje tylko lokalnie.
+
+================================================================================
