@@ -1,0 +1,58 @@
+# Uruchomienie MySQL + phpMyAdmin + API synchronizacji (Windows: Docker Desktop).
+# Z katalogu database: docker compose up -d --build
+# phpMyAdmin: http://localhost:8080
+# API:        http://localhost:8090/health
+# MySQL z hosta: localhost:3306, baza: pam
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: pam-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: pam_root_dev
+      MYSQL_DATABASE: pam
+      MYSQL_USER: pam
+      MYSQL_PASSWORD: pam_dev
+    ports:
+      - "3306:3306"
+    volumes:
+      - pam_mysql_data:/var/lib/mysql
+      - ./mysql/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./mysql/02_seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-ppam_root_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  phpmyadmin:
+    image: phpmyadmin:5
+    container_name: pam-phpmyadmin
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: root
+      PMA_PASSWORD: pam_root_dev
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "8080:80"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  api:
+    build: ./api
+    container_name: pam-sync-api
+    environment:
+      PORT: "8090"
+      DB_HOST: mysql
+      DB_USER: pam
+      DB_PASSWORD: pam_dev
+      DB_NAME: pam
+    ports:
+      - "8090:8090"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  pam_mysql_data:

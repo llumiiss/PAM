@@ -30,6 +30,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,9 +44,17 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import pl.pam.startproject.data.MeasureType
+import pl.pam.startproject.data.MeasurementAttemptEntity
+import pl.pam.startproject.data.PamDatabase
+import pl.pam.startproject.sync.MeasurementSyncRepository
+import pl.pam.startproject.ui.history.HistoryScreen
 import pl.pam.startproject.ui.theme.StartProjectTheme
 import java.util.Locale
+import kotlin.math.max
 
 private val QUARTER_MILE_METERS = (1609.344 / 4.0).toFloat()
 
@@ -87,14 +96,29 @@ private sealed class MeasurePreset {
     data class SpeedAccel(val targetKmh: Float) : MeasurePreset()
 }
 
+private enum class AppScreen { Measure, History }
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
+            val database = remember { PamDatabase.get(this) }
+            val attemptsFlow = remember { database.measurementDao().observeAllByDateDesc() }
+            var appScreen by remember { mutableStateOf(AppScreen.Measure) }
             StartProjectTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    DragMeasureScreen(modifier = Modifier.padding(innerPadding))
+                    when (appScreen) {
+                        AppScreen.Measure -> DragMeasureScreen(
+                            modifier = Modifier.padding(innerPadding),
+                            onOpenHistory = { appScreen = AppScreen.History }
+                        )
+                        AppScreen.History -> HistoryScreen(
+                            modifier = Modifier.padding(innerPadding),
+                            attemptsFlow = attemptsFlow,
+                            onBackToMeasure = { appScreen = AppScreen.Measure }
+                        )
+                    }
                 }
             }
         }
@@ -103,8 +127,14 @@ class MainActivity : ComponentActivity() {
 
 @SuppressLint("MissingPermission")
 @Composable
-private fun DragMeasureScreen(modifier: Modifier = Modifier) {
+private fun DragMeasureScreen(
+    modifier: Modifier = Modifier,
+    onOpenHistory: () -> Unit,
+) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val measurementDao = remember { PamDatabase.get(context).measurementDao() }
+    val syncRepository = remember { MeasurementSyncRepository.get(context) }
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
 
     var hasLocationPermission by remember {
@@ -122,6 +152,7 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
     var elapsedTimeMs by remember { mutableLongStateOf(0L) }
     var distanceMeters by remember { mutableStateOf(0f) }
     var speedKmh by remember { mutableStateOf(0f) }
+    var maxSpeedKmhPeak by remember { mutableStateOf(0f) }
     var previousLocation by remember { mutableStateOf<Location?>(null) }
     var armedAnchor by remember { mutableStateOf<Location?>(null) }
 
@@ -133,10 +164,43 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
     val presetState = rememberUpdatedState(preset)
     val runPhaseState = rememberUpdatedState(runPhase)
     val runPhaseForTimer = rememberUpdatedState(runPhase)
-    val finishSession = rememberUpdatedState {
+    val handleSessionEnd = rememberUpdatedState { shouldSave: Boolean ->
+        val wasRunning = runPhase == RunPhase.Running
+        val snapElapsed = elapsedTimeMs
+        val snapDist = distanceMeters
+        val snapMax = max(maxSpeedKmhPeak, speedKmh)
+        val snapPreset = preset
+        val snapStrategy = startStrategy
+
         runPhase = RunPhase.Idle
         armedAnchor = null
         countdownTick = 0
+
+        val save = shouldSave && wasRunning && (snapElapsed > 0L || snapDist > 0f)
+        if (save) {
+            scope.launch(Dispatchers.IO) {
+                val (measureType, modeLabel) = when (snapPreset) {
+                    is MeasurePreset.Distance -> MeasureType.DISTANCE to snapPreset.label
+                    is MeasurePreset.SpeedAccel ->
+                        MeasureType.SPEED_ACCEL to "0–${snapPreset.targetKmh.toInt()} km/h"
+                }
+                val strategyStr = when (snapStrategy) {
+                    StartStrategy.CountdownThenMeasure -> "countdown_then_measure"
+                    StartStrategy.ArmedWaitForMotion -> "armed_wait_for_motion"
+                }
+                val row = MeasurementAttemptEntity(
+                    measuredAtEpochMs = System.currentTimeMillis(),
+                    measureType = measureType,
+                    modeLabel = modeLabel,
+                    startStrategy = strategyStr,
+                    maxSpeedKmh = snapMax.toDouble(),
+                    durationMs = snapElapsed,
+                    distanceM = snapDist.toDouble(),
+                )
+                measurementDao.insert(row)
+                syncRepository.pushAfterLocalSave(row)
+            }
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -151,6 +215,7 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
         elapsedTimeMs = 0L
         distanceMeters = 0f
         speedKmh = 0f
+        maxSpeedKmhPeak = 0f
         previousLocation = null
     }
 
@@ -181,6 +246,7 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
                 if (phase != RunPhase.Running) return
 
                 speedKmh = latest.speed * 3.6f
+                maxSpeedKmhPeak = max(maxSpeedKmhPeak, speedKmh)
                 var newDistance = distanceMeters
                 previousLocation?.let { previous ->
                     newDistance += previous.distanceTo(latest)
@@ -190,12 +256,12 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
                 when (val p = presetState.value) {
                     is MeasurePreset.Distance -> {
                         if (newDistance >= p.meters) {
-                            finishSession.value.invoke()
+                            handleSessionEnd.value.invoke(true)
                         }
                     }
                     is MeasurePreset.SpeedAccel -> {
                         if (speedKmh >= p.targetKmh) {
-                            finishSession.value.invoke()
+                            handleSessionEnd.value.invoke(true)
                         }
                     }
                 }
@@ -249,10 +315,19 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(
-            text = "PAM Drag Measure",
-            style = MaterialTheme.typography.headlineSmall
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "PAM Drag Measure",
+                style = MaterialTheme.typography.headlineSmall
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = onOpenHistory) { Text("Historia") }
+            }
+        }
 
         if (!hasLocationPermission) {
             Button(onClick = {
@@ -323,7 +398,10 @@ private fun DragMeasureScreen(modifier: Modifier = Modifier) {
 
             Button(
                 enabled = sessionActive,
-                onClick = { finishSession.value.invoke() }
+                onClick = {
+                    val save = runPhase == RunPhase.Running
+                    handleSessionEnd.value.invoke(save)
+                }
             ) { Text("Stop") }
         }
     }
@@ -536,6 +614,6 @@ private fun formatElapsedTime(ms: Long): String {
 @Composable
 private fun DragMeasurePreview() {
     StartProjectTheme {
-        DragMeasureScreen()
+        DragMeasureScreen(onOpenHistory = {})
     }
 }
