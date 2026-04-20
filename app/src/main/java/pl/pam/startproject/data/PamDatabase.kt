@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [MeasurementAttemptEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class PamDatabase : RoomDatabase() {
@@ -24,7 +24,7 @@ abstract class PamDatabase : RoomDatabase() {
                     context.applicationContext,
                     PamDatabase::class.java,
                     "pam_measurements.db",
-                ).build().also { instance = it }
+                ).fallbackToDestructiveMigration().build().also { instance = it }
             }
         }
     }

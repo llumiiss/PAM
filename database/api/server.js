@@ -30,11 +30,13 @@ async function main() {
 
   /**
    * Body (camelCase):
-   * measuredAtEpochMs, measureType, modeLabel, startStrategy?, maxSpeedKmh, durationMs, distanceM
+   * clientRecordId, measuredAtEpochMs, measureType, modeLabel, startStrategy?,
+   * maxSpeedKmh, durationMs, distanceM, userId?, vehicleId?
    */
   app.post("/api/attempts", async (req, res) => {
     try {
       const {
+        clientRecordId,
         measuredAtEpochMs,
         measureType,
         modeLabel,
@@ -42,9 +44,12 @@ async function main() {
         maxSpeedKmh,
         durationMs,
         distanceM,
+        userId,
+        vehicleId,
       } = req.body || {};
 
       if (
+        !clientRecordId ||
         measuredAtEpochMs == null ||
         !measureType ||
         !modeLabel ||
@@ -62,9 +67,23 @@ async function main() {
 
       const [result] = await pool.execute(
         `INSERT INTO measurement_attempts
-          (measured_at, measure_type, mode_label, start_strategy, max_speed_kmh, duration_ms, distance_m)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          (client_record_id, user_id, vehicle_id, measured_at, measure_type, mode_label, start_strategy, max_speed_kmh, duration_ms, distance_m)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           id = LAST_INSERT_ID(id),
+           user_id = VALUES(user_id),
+           vehicle_id = VALUES(vehicle_id),
+           measured_at = VALUES(measured_at),
+           measure_type = VALUES(measure_type),
+           mode_label = VALUES(mode_label),
+           start_strategy = VALUES(start_strategy),
+           max_speed_kmh = VALUES(max_speed_kmh),
+           duration_ms = VALUES(duration_ms),
+           distance_m = VALUES(distance_m)`,
         [
+          clientRecordId,
+          userId ?? null,
+          vehicleId ?? null,
           measuredAt,
           measureType,
           modeLabel,
@@ -73,6 +92,11 @@ async function main() {
           Number(durationMs),
           Number(distanceM),
         ]
+      );
+
+      await pool.execute(
+        `INSERT INTO sync_events (client_record_id, event_type, message) VALUES (?, 'insert', 'api upsert')`,
+        [clientRecordId]
       );
 
       res.status(201).json({ id: result.insertId });

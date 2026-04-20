@@ -54,6 +54,7 @@ import pl.pam.startproject.sync.MeasurementSyncRepository
 import pl.pam.startproject.ui.history.HistoryScreen
 import pl.pam.startproject.ui.theme.StartProjectTheme
 import java.util.Locale
+import java.util.UUID
 import kotlin.math.max
 
 private val QUARTER_MILE_METERS = (1609.344 / 4.0).toFloat()
@@ -102,6 +103,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val syncRepository = MeasurementSyncRepository.get(this)
+        syncRepository.enqueueSyncNow()
         setContent {
             val database = remember { PamDatabase.get(this) }
             val attemptsFlow = remember { database.measurementDao().observeAllByDateDesc() }
@@ -133,7 +136,6 @@ private fun DragMeasureScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val measurementDao = remember { PamDatabase.get(context).measurementDao() }
     val syncRepository = remember { MeasurementSyncRepository.get(context) }
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
 
@@ -189,6 +191,7 @@ private fun DragMeasureScreen(
                     StartStrategy.ArmedWaitForMotion -> "armed_wait_for_motion"
                 }
                 val row = MeasurementAttemptEntity(
+                    clientRecordId = UUID.randomUUID().toString(),
                     measuredAtEpochMs = System.currentTimeMillis(),
                     measureType = measureType,
                     modeLabel = modeLabel,
@@ -197,8 +200,7 @@ private fun DragMeasureScreen(
                     durationMs = snapElapsed,
                     distanceM = snapDist.toDouble(),
                 )
-                measurementDao.insert(row)
-                syncRepository.pushAfterLocalSave(row)
+                syncRepository.insertPendingAndSync(row)
             }
         }
     }
