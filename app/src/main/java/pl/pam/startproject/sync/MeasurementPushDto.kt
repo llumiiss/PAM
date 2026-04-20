@@ -4,6 +4,7 @@ import pl.pam.startproject.data.MeasurementAttemptEntity
 
 /** JSON wysyłany do POST /api/attempts (camelCase, Gson). */
 data class MeasurementPushDto(
+    val clientRecordId: String,
     val measuredAtEpochMs: Long,
     val measureType: String,
     val modeLabel: String,
@@ -14,6 +15,7 @@ data class MeasurementPushDto(
 ) {
     companion object {
         fun fromEntity(e: MeasurementAttemptEntity) = MeasurementPushDto(
+            clientRecordId = e.clientRecordId,
             measuredAtEpochMs = e.measuredAtEpochMs,
             measureType = e.measureType,
             modeLabel = e.modeLabel,

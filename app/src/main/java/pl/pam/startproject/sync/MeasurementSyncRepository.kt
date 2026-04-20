@@ -7,6 +7,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import pl.pam.startproject.BuildConfig
 import pl.pam.startproject.data.MeasurementAttemptEntity
+import pl.pam.startproject.data.PamDatabase
+import pl.pam.startproject.data.SyncState
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
@@ -16,6 +18,8 @@ import java.util.concurrent.TimeUnit
  * Błąd sieci nie cofa zapisu lokalnego — tylko log.
  */
 class MeasurementSyncRepository(context: Context) {
+    private val appContext = context.applicationContext
+    private val dao = PamDatabase.get(appContext).measurementDao()
 
     private val api: MeasurementSyncApi by lazy {
         val client = OkHttpClient.Builder()
@@ -31,14 +35,41 @@ class MeasurementSyncRepository(context: Context) {
             .create(MeasurementSyncApi::class.java)
     }
 
-    suspend fun pushAfterLocalSave(row: MeasurementAttemptEntity) = withContext(Dispatchers.IO) {
-        try {
-            val body = MeasurementPushDto.fromEntity(row)
-            val res = api.pushAttempt(body)
-            Log.i(TAG, "Synced attempt to server, remote id=${res.id}")
-        } catch (e: Exception) {
-            Log.e(TAG, "Sync to MySQL backend failed (local Room zapis bez zmian)", e)
+    data class SyncBatchResult(val pushed: Int, val failed: Int, val stillPending: Int)
+
+    suspend fun syncPending(limit: Int = 50): SyncBatchResult = withContext(Dispatchers.IO) {
+        val batch = dao.getPendingForSync(limit)
+        var pushed = 0
+        var failed = 0
+        for (row in batch) {
+            try {
+                val body = MeasurementPushDto.fromEntity(row)
+                val res = api.pushAttempt(body)
+                dao.markSynced(
+                    clientRecordId = row.clientRecordId,
+                    remoteId = res.id,
+                    syncedAt = System.currentTimeMillis()
+                )
+                pushed++
+            } catch (e: Exception) {
+                dao.markFailed(row.clientRecordId, e.message)
+                failed++
+                Log.e(TAG, "Sync failed for ${row.clientRecordId}", e)
+            }
         }
+        val stillPending = dao.countPendingSync()
+        SyncBatchResult(pushed = pushed, failed = failed, stillPending = stillPending)
+    }
+
+    suspend fun insertPendingAndSync(row: MeasurementAttemptEntity) {
+        withContext(Dispatchers.IO) {
+            dao.insert(row.copy(syncState = SyncState.PENDING))
+        }
+        MeasurementSyncWorker.enqueue(appContext)
+    }
+
+    fun enqueueSyncNow() {
+        MeasurementSyncWorker.enqueue(appContext)
     }
 
     companion object {
