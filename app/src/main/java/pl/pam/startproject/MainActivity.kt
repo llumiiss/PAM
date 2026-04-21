@@ -10,6 +10,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -47,11 +49,19 @@ import com.google.android.gms.location.Priority
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import pl.pam.startproject.admin.AdminRepository
+import pl.pam.startproject.auth.AuthRepository
+import pl.pam.startproject.auth.SessionManager
+import pl.pam.startproject.auth.SessionUser
 import pl.pam.startproject.data.MeasureType
 import pl.pam.startproject.data.MeasurementAttemptEntity
 import pl.pam.startproject.data.PamDatabase
+import pl.pam.startproject.leaderboard.LeaderboardRepository
 import pl.pam.startproject.sync.MeasurementSyncRepository
+import pl.pam.startproject.ui.auth.AuthScreen
+import pl.pam.startproject.ui.admin.AdminScreen
 import pl.pam.startproject.ui.history.HistoryScreen
+import pl.pam.startproject.ui.leaderboard.LeaderboardScreen
 import pl.pam.startproject.ui.theme.StartProjectTheme
 import java.util.Locale
 import java.util.UUID
@@ -97,7 +107,7 @@ private sealed class MeasurePreset {
     data class SpeedAccel(val targetKmh: Float) : MeasurePreset()
 }
 
-private enum class AppScreen { Measure, History }
+private enum class AppScreen { Auth, Measure, History, Leaderboard, Admin }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -106,21 +116,102 @@ class MainActivity : ComponentActivity() {
         val syncRepository = MeasurementSyncRepository.get(this)
         syncRepository.enqueueSyncNow()
         setContent {
+            val scope = rememberCoroutineScope()
             val database = remember { PamDatabase.get(this) }
+            val sessionManager = remember { SessionManager(this) }
+            val authRepository = remember { AuthRepository(this) }
+            val leaderboardRepository = remember { LeaderboardRepository(this) }
+            val adminRepository = remember { AdminRepository(this) }
             val attemptsFlow = remember { database.measurementDao().observeAllByDateDesc() }
-            var appScreen by remember { mutableStateOf(AppScreen.Measure) }
+            var sessionUser by remember { mutableStateOf<SessionUser?>(sessionManager.getUser()) }
+            var authLoading by remember { mutableStateOf(false) }
+            var authError by remember { mutableStateOf<String?>(null) }
+            var appScreen by remember {
+                mutableStateOf(if (sessionManager.getToken() != null) AppScreen.Measure else AppScreen.Auth)
+            }
+            val performLogout: () -> Unit = {
+                sessionManager.clear()
+                sessionUser = null
+                appScreen = AppScreen.Auth
+            }
             StartProjectTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     when (appScreen) {
+                        AppScreen.Auth -> AuthScreen(
+                            modifier = Modifier.padding(innerPadding),
+                            isLoading = authLoading,
+                            errorMessage = authError,
+                            onLogin = { emailOrUsername, password ->
+                                scope.launch {
+                                    authLoading = true
+                                    authError = null
+                                    runCatching { authRepository.login(emailOrUsername, password) }
+                                        .onSuccess {
+                                            sessionUser = it
+                                            appScreen = AppScreen.Measure
+                                            syncRepository.enqueueSyncNow()
+                                        }
+                                        .onFailure { authError = it.message ?: "Błąd logowania" }
+                                    authLoading = false
+                                }
+                            },
+                            onRegister = { username, email, password ->
+                                scope.launch {
+                                    authLoading = true
+                                    authError = null
+                                    runCatching { authRepository.register(username, email, password) }
+                                        .onSuccess {
+                                            sessionUser = it
+                                            appScreen = AppScreen.Measure
+                                            syncRepository.enqueueSyncNow()
+                                        }
+                                        .onFailure { authError = it.message ?: "Błąd rejestracji" }
+                                    authLoading = false
+                                }
+                            }
+                        )
                         AppScreen.Measure -> DragMeasureScreen(
                             modifier = Modifier.padding(innerPadding),
-                            onOpenHistory = { appScreen = AppScreen.History }
+                            onOpenHistory = { appScreen = AppScreen.History },
+                            onOpenLeaderboard = { appScreen = AppScreen.Leaderboard },
+                            onOpenAdmin = {
+                                if (sessionUser?.isAdmin == true) appScreen = AppScreen.Admin
+                            },
+                            onLogout = performLogout,
+                            sessionUser = sessionUser
                         )
                         AppScreen.History -> HistoryScreen(
                             modifier = Modifier.padding(innerPadding),
                             attemptsFlow = attemptsFlow,
                             onBackToMeasure = { appScreen = AppScreen.Measure }
                         )
+                        AppScreen.Leaderboard -> LeaderboardScreen(
+                            modifier = Modifier.padding(innerPadding),
+                            repository = leaderboardRepository,
+                            isAdmin = sessionUser?.isAdmin == true,
+                            onDeleteAttempt = { attemptId ->
+                                val token = sessionManager.getToken()
+                                if (token != null) {
+                                    adminRepository.deleteAttempt(token, attemptId)
+                                }
+                            },
+                            onBack = { appScreen = AppScreen.Measure }
+                        )
+                        AppScreen.Admin -> {
+                            val token = sessionManager.getToken()
+                            val user = sessionUser
+                            if (token == null || user == null || !user.isAdmin) {
+                                appScreen = AppScreen.Measure
+                            } else {
+                                AdminScreen(
+                                    modifier = Modifier.padding(innerPadding),
+                                    repository = adminRepository,
+                                    authToken = token,
+                                    currentUserId = user.id,
+                                    onBack = { appScreen = AppScreen.Measure }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -133,6 +224,10 @@ class MainActivity : ComponentActivity() {
 private fun DragMeasureScreen(
     modifier: Modifier = Modifier,
     onOpenHistory: () -> Unit,
+    onOpenLeaderboard: () -> Unit,
+    onOpenAdmin: () -> Unit,
+    onLogout: () -> Unit,
+    sessionUser: SessionUser?,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -322,12 +417,29 @@ private fun DragMeasureScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                text = "PAM Drag Measure",
-                style = MaterialTheme.typography.headlineSmall
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Column {
+                Text(
+                    text = "PAM Drag Measure",
+                    style = MaterialTheme.typography.headlineSmall
+                )
+                Text(
+                    text = "Użytkownik: ${sessionUser?.username ?: "offline"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Wyloguj na początku — na wąskich ekranach nie ginie poza prawą krawędzią.
+                Button(onClick = onLogout) { Text("Wyloguj") }
                 Button(onClick = onOpenHistory) { Text("Historia") }
+                Button(onClick = onOpenLeaderboard) { Text("Ranking") }
+                if (sessionUser?.isAdmin == true) {
+                    Button(onClick = onOpenAdmin) { Text("Admin") }
+                }
             }
         }
 
@@ -616,6 +728,12 @@ private fun formatElapsedTime(ms: Long): String {
 @Composable
 private fun DragMeasurePreview() {
     StartProjectTheme {
-        DragMeasureScreen(onOpenHistory = {})
+        DragMeasureScreen(
+            onOpenHistory = {},
+            onOpenLeaderboard = {},
+            onOpenAdmin = {},
+            onLogout = {},
+            sessionUser = SessionUser(id = 1, username = "demo", email = "demo@example.com", displayName = "Demo", role = "user")
+        )
     }
 }

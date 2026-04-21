@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
   username VARCHAR(64) NOT NULL,
   email VARCHAR(255) NOT NULL,
   display_name VARCHAR(128) NULL,
+  role ENUM('user', 'admin') NOT NULL DEFAULT 'user',
   is_active TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -25,10 +26,26 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS user_credentials (
   user_id BIGINT UNSIGNED NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
+  password_plain VARCHAR(255) NULL,
   password_algo VARCHAR(32) NOT NULL DEFAULT 'argon2id',
   password_updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (user_id),
   CONSTRAINT fk_user_credentials_user FOREIGN KEY (user_id)
+    REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Tozsamosci OAuth (Google/Facebook) - przygotowane pod pozniejsza integracje.
+CREATE TABLE IF NOT EXISTS oauth_identities (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  provider ENUM('google', 'facebook') NOT NULL,
+  provider_user_id VARCHAR(191) NOT NULL,
+  email_at_provider VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_oauth_identity_provider_user (provider, provider_user_id),
+  KEY idx_oauth_identity_user (user_id),
+  CONSTRAINT fk_oauth_identity_user FOREIGN KEY (user_id)
     REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

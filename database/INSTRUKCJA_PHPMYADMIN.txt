@@ -28,6 +28,8 @@ PAM — MySQL + phpMyAdmin + API sync (localhost)
      profil użytkownika (username, email, display_name, is_active).
    - user_credentials
      dane logowania (hash hasła i algorytm), 1:1 z users.
+   - oauth_identities
+     mapowanie kont OAuth (google/facebook) -> users (na teraz przygotowane pod integrację).
    - auth_sessions
      sesje/refresh tokeny (device, expires_at, revoked_at).
    - vehicles
@@ -52,6 +54,13 @@ PAM — MySQL + phpMyAdmin + API sync (localhost)
        baza pam -> sync_events (slad insert/update/error)
    - API test:
        GET http://localhost:8090/health
+   - Konto administratora (tworzone automatycznie przy starcie API):
+       login: admin
+       haslo: admin
+   - Logowanie/rejestracja API:
+       POST http://localhost:8090/api/auth/register
+       POST http://localhost:8090/api/auth/login
+       GET  http://localhost:8090/api/leaderboard
 
 6) Jeśli rekordy nie wpadają do MySQL
    - Sprawdź, czy kontener API działa:
@@ -64,9 +73,20 @@ PAM — MySQL + phpMyAdmin + API sync (localhost)
        i dodaj IP do network_security_config.xml (lub użyj HTTPS).
    - Jeśli masz stary wolumen MySQL:
        uruchom ręcznie SQL z database/mysql/03_upgrade_existing.sql
+   - Po zmianach backendu:
+       docker compose up -d --build
 
-7) Bezpieczeństwo
+7) Uprawnienia administratora
+   - Konto: admin / admin (tworzone automatycznie przy starcie API).
+   - Admin moze:
+       * przegladac wszystkich userow (GET /api/admin/users)
+       * usuwac userow (DELETE /api/admin/users/:id)
+       * usuwac rekordy/ranking (DELETE /api/admin/attempts/:id)
+   - Usuniecie usera kasuje jego rekordy pomiarowe.
+
+8) Bezpieczeństwo
    - Hasła w docker-compose.yml są TYLKO na lokalny development.
    - Nie commituj produkcyjnych haseł; na serwerze użyj zmiennych środowiskowych.
+   - W produkcji koniecznie zmień domyślne konto admin i JWT_SECRET.
 
 ================================================================================

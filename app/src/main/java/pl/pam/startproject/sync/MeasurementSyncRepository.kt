@@ -5,6 +5,7 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import pl.pam.startproject.auth.SessionManager
 import pl.pam.startproject.BuildConfig
 import pl.pam.startproject.data.MeasurementAttemptEntity
 import pl.pam.startproject.data.PamDatabase
@@ -20,6 +21,7 @@ import java.util.concurrent.TimeUnit
 class MeasurementSyncRepository(context: Context) {
     private val appContext = context.applicationContext
     private val dao = PamDatabase.get(appContext).measurementDao()
+    private val sessionManager = SessionManager(appContext)
 
     private val api: MeasurementSyncApi by lazy {
         val client = OkHttpClient.Builder()
@@ -44,7 +46,8 @@ class MeasurementSyncRepository(context: Context) {
         for (row in batch) {
             try {
                 val body = MeasurementPushDto.fromEntity(row)
-                val res = api.pushAttempt(body)
+                val authHeader = sessionManager.getToken()?.let { "Bearer $it" }
+                val res = api.pushAttempt(authHeader, body)
                 dao.markSynced(
                     clientRecordId = row.clientRecordId,
                     remoteId = res.id,
