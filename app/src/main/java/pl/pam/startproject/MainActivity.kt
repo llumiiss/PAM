@@ -56,6 +56,8 @@ import pl.pam.startproject.auth.SessionUser
 import pl.pam.startproject.data.MeasureType
 import pl.pam.startproject.data.MeasurementAttemptEntity
 import pl.pam.startproject.data.PamDatabase
+import pl.pam.startproject.data.SpeedProfileCodec
+import pl.pam.startproject.gps.GpsSpeedEstimator
 import pl.pam.startproject.leaderboard.LeaderboardRepository
 import pl.pam.startproject.sync.MeasurementSyncRepository
 import pl.pam.startproject.ui.auth.AuthScreen
@@ -74,6 +76,24 @@ private const val MOTION_MIN_DISPLACEMENT_M = 4f
 
 /** Minimalna prędkość z GPS (m/s), gdy [Location.hasSpeed] — ok. 3,2 km/h. */
 private const val MOTION_MIN_SPEED_MS = 0.9f
+
+/** Min. odstęp czasu między punktami profilu prędkości (zmniejsza rozmiar JSON). */
+private const val SPEED_SAMPLE_MIN_INTERVAL_MS = 40L
+
+/** Górny limit punktów profilu prędkości na jedną próbę. */
+private const val SPEED_SAMPLE_MAX_POINTS = 450
+
+private fun appendSpeedSample(
+    samples: ArrayList<Pair<Long, Float>>,
+    tMs: Long,
+    vKmh: Float,
+) {
+    if (samples.size >= SPEED_SAMPLE_MAX_POINTS) return
+    val last = samples.lastOrNull()
+    if (last == null || tMs - last.first >= SPEED_SAMPLE_MIN_INTERVAL_MS) {
+        samples.add(tMs to vKmh)
+    }
+}
 
 private data class DistanceOption(val meters: Float, val label: String)
 
@@ -252,6 +272,9 @@ private fun DragMeasureScreen(
     var maxSpeedKmhPeak by remember { mutableStateOf(0f) }
     var previousLocation by remember { mutableStateOf<Location?>(null) }
     var armedAnchor by remember { mutableStateOf<Location?>(null) }
+    var lastArmedLocation by remember { mutableStateOf<Location?>(null) }
+    var runAnchorTimeMs by remember { mutableLongStateOf(0L) }
+    val speedSamples = remember { ArrayList<Pair<Long, Float>>(256) }
 
     var preset by remember {
         mutableStateOf<MeasurePreset>(
@@ -268,6 +291,10 @@ private fun DragMeasureScreen(
         val snapMax = max(maxSpeedKmhPeak, speedKmh)
         val snapPreset = preset
         val snapStrategy = startStrategy
+        val snapSpeedProfile = speedSamples.toList()
+        speedSamples.clear()
+        runAnchorTimeMs = 0L
+        lastArmedLocation = null
 
         runPhase = RunPhase.Idle
         armedAnchor = null
@@ -294,6 +321,7 @@ private fun DragMeasureScreen(
                     maxSpeedKmh = snapMax.toDouble(),
                     durationMs = snapElapsed,
                     distanceM = snapDist.toDouble(),
+                    speedProfileJson = SpeedProfileCodec.encode(snapSpeedProfile),
                 )
                 syncRepository.insertPendingAndSync(row)
             }
@@ -314,6 +342,8 @@ private fun DragMeasureScreen(
         speedKmh = 0f
         maxSpeedKmhPeak = 0f
         previousLocation = null
+        runAnchorTimeMs = 0L
+        speedSamples.clear()
     }
 
     val locationCallback = remember {
@@ -323,7 +353,9 @@ private fun DragMeasureScreen(
                 val phase = runPhaseState.value
 
                 if (phase == RunPhase.Armed) {
-                    speedKmh = latest.speed * 3.6f
+                    val estArmed = GpsSpeedEstimator.estimateKmh(lastArmedLocation, latest)
+                    speedKmh = estArmed
+                    lastArmedLocation = latest
                     val anchor = armedAnchor
                     if (anchor == null) {
                         armedAnchor = latest
@@ -333,8 +365,12 @@ private fun DragMeasureScreen(
                         if (movedFar || fastEnough) {
                             runPhase = RunPhase.Running
                             resetMeasurementBaselines()
-                            speedKmh = latest.speed * 3.6f
+                            val startKmh = GpsSpeedEstimator.estimateKmh(null, latest)
+                            speedKmh = startKmh
+                            maxSpeedKmhPeak = max(maxSpeedKmhPeak, startKmh)
                             previousLocation = latest
+                            runAnchorTimeMs = latest.time
+                            appendSpeedSample(speedSamples, 0L, startKmh)
                         }
                     }
                     return
@@ -342,14 +378,18 @@ private fun DragMeasureScreen(
 
                 if (phase != RunPhase.Running) return
 
-                speedKmh = latest.speed * 3.6f
-                maxSpeedKmhPeak = max(maxSpeedKmhPeak, speedKmh)
+                val kmh = GpsSpeedEstimator.estimateKmh(previousLocation, latest)
+                speedKmh = kmh
+                maxSpeedKmhPeak = max(maxSpeedKmhPeak, kmh)
                 var newDistance = distanceMeters
                 previousLocation?.let { previous ->
                     newDistance += previous.distanceTo(latest)
                 }
                 distanceMeters = newDistance
                 previousLocation = latest
+                if (runAnchorTimeMs == 0L) runAnchorTimeMs = latest.time
+                val tMs = (latest.time - runAnchorTimeMs).coerceAtLeast(0L)
+                appendSpeedSample(speedSamples, tMs, kmh)
                 when (val p = presetState.value) {
                     is MeasurePreset.Distance -> {
                         if (newDistance >= p.meters) {
@@ -357,7 +397,7 @@ private fun DragMeasureScreen(
                         }
                     }
                     is MeasurePreset.SpeedAccel -> {
-                        if (speedKmh >= p.targetKmh) {
+                        if (kmh >= p.targetKmh) {
                             handleSessionEnd.value.invoke(true)
                         }
                     }
@@ -392,10 +432,14 @@ private fun DragMeasureScreen(
         if (!hasLocationPermission || !needsGps) {
             onDispose { }
         } else {
+            // Wyższa częstotliwość = szybsza reakcja na ruch i gęstszy profil (większe zużycie baterii).
             val request = LocationRequest.Builder(
                 Priority.PRIORITY_HIGH_ACCURACY,
-                1000L
-            ).setMinUpdateIntervalMillis(500L).build()
+                100L
+            )
+                .setMinUpdateIntervalMillis(50L)
+                .setMaxUpdateDelayMillis(200L)
+                .build()
             fusedLocationClient.requestLocationUpdates(request, locationCallback, context.mainLooper)
             onDispose {
                 fusedLocationClient.removeLocationUpdates(locationCallback)
@@ -486,7 +530,7 @@ private fun DragMeasureScreen(
                     else -> { }
                 }
                 Text("Czas: ${formatElapsedTime(elapsedTimeMs)}")
-                Text("Prędkość: ${"%.1f".format(Locale.US, speedKmh)} km/h")
+                Text("Prędkość (GPS): ${"%.1f".format(Locale.US, speedKmh)} km/h")
                 Text("Dystans: ${"%.1f".format(Locale.US, distanceMeters)} m")
             }
         }
@@ -503,6 +547,7 @@ private fun DragMeasureScreen(
                         }
                         StartStrategy.ArmedWaitForMotion -> {
                             armedAnchor = null
+                            lastArmedLocation = null
                             resetMeasurementBaselines()
                             runPhase = RunPhase.Armed
                         }
