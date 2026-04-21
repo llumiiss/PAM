@@ -23,6 +23,8 @@ data class MeasurementAttemptEntity(
     @ColumnInfo(name = "max_speed_kmh") val maxSpeedKmh: Double,
     @ColumnInfo(name = "duration_ms") val durationMs: Long,
     @ColumnInfo(name = "distance_m") val distanceM: Double,
+    /** JSON [[tMs,vKmh],…] — profil prędkości z pomiaru (estymacja GPS + dystans/Δt). */
+    @ColumnInfo(name = "speed_profile_json") val speedProfileJson: String? = null,
     @ColumnInfo(name = "sync_state") val syncState: String = SyncState.PENDING,
     @ColumnInfo(name = "sync_retries") val syncRetries: Int = 0,
     @ColumnInfo(name = "last_sync_error") val lastSyncError: String? = null,

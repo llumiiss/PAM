@@ -1,6 +1,8 @@
 package pl.pam.startproject.ui.history
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -9,10 +11,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -26,6 +32,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.Flow
 import pl.pam.startproject.data.MeasureType
 import pl.pam.startproject.data.MeasurementAttemptEntity
+import pl.pam.startproject.data.SpeedProfileCodec
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -40,6 +47,7 @@ private enum class HistorySort {
     BestTime,
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(
     attemptsFlow: Flow<List<MeasurementAttemptEntity>>,
@@ -48,6 +56,7 @@ fun HistoryScreen(
 ) {
     var filter by remember { mutableStateOf(HistoryFilter.All) }
     var sort by remember { mutableStateOf(HistorySort.DateNewest) }
+    var detailAttempt by remember { mutableStateOf<MeasurementAttemptEntity?>(null) }
 
     val raw by attemptsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
@@ -66,12 +75,13 @@ fun HistoryScreen(
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -122,14 +132,30 @@ fun HistoryScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(displayed, key = { it.id }) { row ->
-                AttemptRow(entity = row)
+                AttemptRow(
+                    entity = row,
+                    onOpenDetail = { detailAttempt = row }
+                )
+            }
+        }
+        }
+
+        detailAttempt?.let { picked ->
+            ModalBottomSheet(onDismissRequest = { detailAttempt = null }) {
+                AttemptDetailSheetContent(
+                    entity = picked,
+                    onClose = { detailAttempt = null }
+                )
             }
         }
     }
 }
 
 @Composable
-private fun AttemptRow(entity: MeasurementAttemptEntity) {
+private fun AttemptRow(
+    entity: MeasurementAttemptEntity,
+    onOpenDetail: () -> Unit,
+) {
     val dateStr = remember(entity.measuredAtEpochMs) {
         SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(entity.measuredAtEpochMs))
     }
@@ -138,7 +164,7 @@ private fun AttemptRow(entity: MeasurementAttemptEntity) {
         MeasureType.SPEED_ACCEL -> "Przyspieszenie"
         else -> entity.measureType
     }
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenDetail)) {
         Column(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -152,6 +178,76 @@ private fun AttemptRow(entity: MeasurementAttemptEntity) {
             entity.startStrategy?.let {
                 Text("Start: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            Text(
+                "Dotknij, aby zobaczyć wykres i statystyki",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+@Composable
+private fun AttemptDetailSheetContent(
+    entity: MeasurementAttemptEntity,
+    onClose: () -> Unit,
+) {
+    val samples = remember(entity.speedProfileJson) { SpeedProfileCodec.decode(entity.speedProfileJson) }
+    val avgKmh = remember(samples) {
+        if (samples.isEmpty()) null
+        else samples.map { it.second.toDouble() }.average()
+    }
+    val durationSec = remember(entity.durationMs) { entity.durationMs / 1000.0 }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 32.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Szczegóły próby", style = MaterialTheme.typography.titleLarge)
+        Text(entity.modeLabel, style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Czas: ${formatDuration(entity.durationMs)} · Dystans: ${"%.1f".format(Locale.US, entity.distanceM)} m",
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Text(
+            "Vmax (zapis): ${"%.1f".format(Locale.US, entity.maxSpeedKmh)} km/h",
+            style = MaterialTheme.typography.bodyMedium
+        )
+        avgKmh?.let {
+            Text(
+                "Średnia z profilu (próbki): ${"%.1f".format(Locale.US, it)} km/h",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+        if (durationSec > 0.5 && entity.distanceM > 1.0) {
+            val implied = (entity.distanceM / durationSec) * 3.6
+            Text(
+                "Średnia z dystans/czas: ${"%.1f".format(Locale.US, implied)} km/h",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Text("Prędkość w czasie", style = MaterialTheme.typography.titleSmall)
+        if (samples.size >= 2) {
+            SpeedOverTimeChart(samples = samples)
+            Text(
+                "Oś X: czas od startu pomiaru (ms), oś Y: prędkość (km/h).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            Text(
+                "Brak zapisanego profilu (próba sprzed aktualizacji lub zbyt krótka).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Button(onClick = onClose, modifier = Modifier.fillMaxWidth()) {
+            Text("Zamknij")
         }
     }
 }
