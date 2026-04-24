@@ -10,7 +10,8 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["client_record_id"], unique = true),
         Index(value = ["sync_state"]),
-        Index(value = ["measured_at_epoch_ms"])
+        Index(value = ["measured_at_epoch_ms"]),
+        Index(value = ["owner_user_id"])
     ]
 )
 data class MeasurementAttemptEntity(
@@ -25,6 +26,8 @@ data class MeasurementAttemptEntity(
     @ColumnInfo(name = "distance_m") val distanceM: Double,
     /** JSON [[tMs,vKmh],…] — profil prędkości z pomiaru (estymacja GPS + dystans/Δt). */
     @ColumnInfo(name = "speed_profile_json") val speedProfileJson: String? = null,
+    @ColumnInfo(name = "owner_user_id") val ownerUserId: Long? = null,
+    @ColumnInfo(name = "owner_username") val ownerUsername: String? = null,
     @ColumnInfo(name = "sync_state") val syncState: String = SyncState.PENDING,
     @ColumnInfo(name = "sync_retries") val syncRetries: Int = 0,
     @ColumnInfo(name = "last_sync_error") val lastSyncError: String? = null,

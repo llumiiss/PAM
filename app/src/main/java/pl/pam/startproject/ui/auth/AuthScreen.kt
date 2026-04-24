@@ -35,6 +35,11 @@ private fun registrationEmailValid(email: String): Boolean {
     return e.contains('@') && e.contains(".com", ignoreCase = true)
 }
 
+private fun passwordValid(password: String): Boolean {
+    val p = password.trim()
+    return p.length >= 5 && p.all { it.isLetterOrDigit() }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AuthScreen(
@@ -52,7 +57,8 @@ fun AuthScreen(
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
 
     val emailOk = registrationEmailValid(email)
-    val registerReady = username.isNotBlank() && emailOk && password.isNotBlank()
+    val passwordOk = passwordValid(password)
+    val registerReady = username.isNotBlank() && emailOk && passwordOk
     val loginReady = emailOrUsername.isNotBlank() && password.isNotBlank()
 
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
@@ -71,7 +77,7 @@ fun AuthScreen(
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
                 Text(
-                    "PAM",
+                    "Draggy",
                     style = MaterialTheme.typography.displaySmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -147,10 +153,28 @@ fun AuthScreen(
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Hasło") },
                         singleLine = true,
+                        isError = registerMode && password.isNotBlank() && !passwordOk,
                         visualTransformation = if (passwordVisible) {
                             VisualTransformation.None
                         } else {
                             PasswordVisualTransformation()
+                        },
+                        supportingText = {
+                            if (registerMode) {
+                                Text(
+                                    when {
+                                        password.isBlank() -> "Min. 5 znaków: tylko litery lub cyfry"
+                                        !passwordOk -> "Hasło musi mieć min. 5 znaków (litery/cyfry)"
+                                        else -> "OK"
+                                    },
+                                    color = when {
+                                        password.isBlank() -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        !passwordOk -> MaterialTheme.colorScheme.error
+                                        else -> MaterialTheme.colorScheme.primary
+                                    },
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
                         },
                         trailingIcon = {
                             TextButton(

@@ -1,7 +1,9 @@
 package pl.pam.startproject.auth
 
 import retrofit2.http.Body
+import retrofit2.http.Header
 import retrofit2.http.POST
+import retrofit2.http.PUT
 
 data class AuthUserDto(
     val id: Long,
@@ -28,10 +30,21 @@ data class LoginRequestDto(
     val password: String
 )
 
+data class ChangePasswordRequestDto(
+    val currentPassword: String,
+    val newPassword: String
+)
+
 interface AuthApi {
     @POST("api/auth/register")
     suspend fun register(@Body body: RegisterRequestDto): AuthResponseDto
 
     @POST("api/auth/login")
     suspend fun login(@Body body: LoginRequestDto): AuthResponseDto
+
+    @PUT("api/auth/change-password")
+    suspend fun changePassword(
+        @Header("Authorization") authorization: String,
+        @Body body: ChangePasswordRequestDto
+    )
 }

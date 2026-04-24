@@ -16,6 +16,11 @@ interface MeasurementDao {
     fun observeAllByDateDesc(): Flow<List<MeasurementAttemptEntity>>
 
     @Query(
+        "SELECT * FROM measurement_attempts WHERE owner_user_id = :ownerUserId ORDER BY measured_at_epoch_ms DESC"
+    )
+    fun observeByOwnerByDateDesc(ownerUserId: Long): Flow<List<MeasurementAttemptEntity>>
+
+    @Query(
         "SELECT * FROM measurement_attempts WHERE measure_type = :measureType ORDER BY measured_at_epoch_ms DESC"
     )
     fun observeByTypeByDateDesc(measureType: String): Flow<List<MeasurementAttemptEntity>>

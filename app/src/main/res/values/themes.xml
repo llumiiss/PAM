@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.StartProject" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.StartProject.Base" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@drawable/launch_car</item>
+    </style>
+
+    <style name="Theme.StartProject" parent="Theme.StartProject.Base" />
 </resources>

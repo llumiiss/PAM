@@ -20,7 +20,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
@@ -56,7 +55,7 @@ private enum class HistorySort {
 @Composable
 fun HistoryScreen(
     attemptsFlow: Flow<List<MeasurementAttemptEntity>>,
-    onBackToMeasure: () -> Unit,
+    isAdmin: Boolean,
     modifier: Modifier = Modifier,
 ) {
     var filter by remember { mutableStateOf(HistoryFilter.All) }
@@ -94,9 +93,6 @@ fun HistoryScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Historia", style = MaterialTheme.typography.headlineSmall)
-                    FilledTonalButton(onClick = onBackToMeasure) {
-                        Text("Pomiar")
-                    }
                 }
 
                 Row(
@@ -159,6 +155,7 @@ fun HistoryScreen(
                     items(displayed, key = { it.id }) { row ->
                         AttemptRow(
                             entity = row,
+                            isAdmin = isAdmin,
                             onOpenDetail = { detailAttempt = row }
                         )
                     }
@@ -180,6 +177,7 @@ fun HistoryScreen(
 @Composable
 private fun AttemptRow(
     entity: MeasurementAttemptEntity,
+    isAdmin: Boolean,
     onOpenDetail: () -> Unit,
 ) {
     val dateStr = remember(entity.measuredAtEpochMs) {
@@ -220,6 +218,13 @@ private fun AttemptRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (isAdmin) {
+                Text(
+                    "Użytkownik: ${entity.ownerUsername ?: "nieznany"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Text(
                 "${formatDuration(entity.durationMs)} · ${"%.0f".format(Locale.US, entity.distanceM)} m · ${"%.0f".format(Locale.US, entity.maxSpeedKmh)} km/h",
                 style = MaterialTheme.typography.bodyMedium
