@@ -13,16 +13,33 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.History
+//import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -38,6 +55,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -65,6 +84,7 @@ import pl.pam.startproject.ui.admin.AdminScreen
 import pl.pam.startproject.ui.history.HistoryScreen
 import pl.pam.startproject.ui.leaderboard.LeaderboardScreen
 import pl.pam.startproject.ui.theme.StartProjectTheme
+import pl.pam.startproject.ui.theme.TimerFont
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.max
@@ -155,7 +175,10 @@ class MainActivity : ComponentActivity() {
                 appScreen = AppScreen.Auth
             }
             StartProjectTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                Scaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ) { innerPadding ->
                     when (appScreen) {
                         AppScreen.Auth -> AuthScreen(
                             modifier = Modifier.padding(innerPadding),
@@ -239,6 +262,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("MissingPermission")
 @Composable
 private fun DragMeasureScreen(
@@ -449,263 +473,373 @@ private fun DragMeasureScreen(
 
     val sessionActive = runPhase != RunPhase.Idle
     val idle = runPhase == RunPhase.Idle
+    var menuExpanded by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column {
-                Text(
-                    text = "PAM Drag Measure",
-                    style = MaterialTheme.typography.headlineSmall
-                )
-                Text(
-                    text = "Użytkownik: ${sessionUser?.username ?: "offline"}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Wyloguj na początku — na wąskich ekranach nie ginie poza prawą krawędzią.
-                Button(onClick = onLogout) { Text("Wyloguj") }
-                Button(onClick = onOpenHistory) { Text("Historia") }
-                Button(onClick = onOpenLeaderboard) { Text("Ranking") }
-                if (sessionUser?.isAdmin == true) {
-                    Button(onClick = onOpenAdmin) { Text("Admin") }
-                }
-            }
-        }
-
-        if (!hasLocationPermission) {
-            Button(onClick = {
-                permissionLauncher.launch(
-                    arrayOf(
-                        Manifest.permission.ACCESS_FINE_LOCATION,
-                        Manifest.permission.ACCESS_COARSE_LOCATION
+    Column(modifier = modifier.fillMaxSize()) {
+        CenterAlignedTopAppBar(
+            title = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Pomiar", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        sessionUser?.username ?: "Offline",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                )
-            }) {
-                Text("Nadaj uprawnienia lokalizacji")
-            }
-        }
-
-        StartStrategyRow(
-            strategy = startStrategy,
-            onStrategyChange = { startStrategy = it },
-            enabled = idle
-        )
-
-        MeasurePresetSelector(
-            preset = preset,
-            onPresetChange = { preset = it },
-            enabled = idle
-        )
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = measurePresetSummary(preset))
-                Text(text = autoStopGoalDescription(preset))
-                when (runPhase) {
-                    RunPhase.Countdown ->
-                        Text(
-                            text = "Start za: $countdownTick",
-                            style = MaterialTheme.typography.headlineMedium
-                        )
-                    RunPhase.Armed ->
-                        Text(
-                            text = "Uzbrojono — czekam na pierwszy ruch (GPS)…",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                    else -> { }
                 }
-                Text("Czas: ${formatElapsedTime(elapsedTimeMs)}")
-                Text("Prędkość (GPS): ${"%.1f".format(Locale.US, speedKmh)} km/h")
-                Text("Dystans: ${"%.1f".format(Locale.US, distanceMeters)} m")
-            }
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(
-                enabled = hasLocationPermission && idle,
-                onClick = {
-                    when (startStrategy) {
-                        StartStrategy.CountdownThenMeasure -> {
-                            resetMeasurementBaselines()
-                            runPhase = RunPhase.Countdown
-                            countdownTick = 5
+            },
+            actions = {
+                Box {
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Menu")
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Historia") },
+                            onClick = {
+                                menuExpanded = false
+                                onOpenHistory()
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Filled.History, contentDescription = null)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Ranking") },
+                            onClick = {
+                                menuExpanded = false
+                                onOpenLeaderboard()
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Filled.EmojiEvents, contentDescription = null)
+                            }
+                        )
+                        if (sessionUser?.isAdmin == true) {
+                            DropdownMenuItem(
+                                text = { Text("Admin") },
+                                onClick = {
+                                    menuExpanded = false
+                                    onOpenAdmin()
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.Settings, contentDescription = null)
+                                }
+                            )
                         }
-                        StartStrategy.ArmedWaitForMotion -> {
-                            armedAnchor = null
-                            lastArmedLocation = null
-                            resetMeasurementBaselines()
-                            runPhase = RunPhase.Armed
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Wyloguj") },
+                            onClick = {
+                                menuExpanded = false
+                                onLogout()
+                            },
+                            leadingIcon = {
+                                Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
+                            }
+                        )
+                    }
+                }
+            }
+        )
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            if (!hasLocationPermission) {
+                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text("Lokalizacja", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Zezwól na GPS, aby mierzyć prędkość i dystans.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = {
+                                permissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    )
+                                )
+                            }
+                        ) {
+                            Text("Zezwól na lokalizację")
                         }
                     }
                 }
-            ) { Text("Start") }
+            }
 
-            Button(
-                enabled = sessionActive,
-                onClick = {
-                    val save = runPhase == RunPhase.Running
-                    handleSessionEnd.value.invoke(save)
-                }
-            ) { Text("Stop") }
-        }
-    }
-}
-
-@Composable
-private fun StartStrategyRow(
-    strategy: StartStrategy,
-    onStrategyChange: (StartStrategy) -> Unit,
-    enabled: Boolean
-) {
-    val countdownSelected = strategy == StartStrategy.CountdownThenMeasure
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text("Strategia startu", style = MaterialTheme.typography.titleSmall)
-            Text(
-                text = if (countdownSelected) {
-                    "5→1, potem od razu pomiar (GPS + stoper)"
-                } else {
-                    "Uzbrojenie — pomiar od pierwszego ruchu GPS"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = if (countdownSelected) "5→1" else "Ruch",
-                style = MaterialTheme.typography.labelMedium
-            )
-            Switch(
-                checked = countdownSelected,
-                onCheckedChange = { checked ->
-                    onStrategyChange(
-                        if (checked) StartStrategy.CountdownThenMeasure
-                        else StartStrategy.ArmedWaitForMotion
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("Przed startem", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Jak zacząć",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                },
-                enabled = enabled
-            )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = startStrategy == StartStrategy.CountdownThenMeasure,
+                            onClick = {
+                                if (idle) startStrategy = StartStrategy.CountdownThenMeasure
+                            },
+                            enabled = idle,
+                            label = { Text("Odliczanie 5 s") }
+                        )
+                        FilterChip(
+                            selected = startStrategy == StartStrategy.ArmedWaitForMotion,
+                            onClick = {
+                                if (idle) startStrategy = StartStrategy.ArmedWaitForMotion
+                            },
+                            enabled = idle,
+                            label = { Text("Po pierwszym ruchu") }
+                        )
+                    }
+                    HorizontalDivider()
+                    Text(
+                        "Tryb",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = preset is MeasurePreset.Distance,
+                            onClick = {
+                                if (idle) preset = MeasurePreset.Distance(1000f, "1 km")
+                            },
+                            enabled = idle,
+                            label = { Text("Dystans") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = preset is MeasurePreset.SpeedAccel,
+                            onClick = {
+                                if (idle) preset = MeasurePreset.SpeedAccel(100f)
+                            },
+                            enabled = idle,
+                            label = { Text("Przyspieszenie 0→V") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    MeasurePresetOptions(
+                        preset = preset,
+                        onPresetChange = { preset = it },
+                        enabled = idle
+                    )
+                }
+            }
+
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = measureGoalLine(preset),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    when (runPhase) {
+                        RunPhase.Countdown ->
+                            Text(
+                                text = "Start za  $countdownTick",
+                                style = MaterialTheme.typography.displaySmall.copy(color = MaterialTheme.colorScheme.primary),
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        RunPhase.Armed ->
+                            Text(
+                                text = "Czekam na ruch…",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Center
+                            )
+                        else -> { }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        StatBlock(
+                            label = "Czas",
+                            value = formatElapsedTime(elapsedTimeMs),
+                            valueStyle = MaterialTheme.typography.headlineSmall.copy(fontFamily = TimerFont)
+                        )
+                        StatBlock(
+                            label = "km/h",
+                            value = "%.1f".format(Locale.US, speedKmh)
+                        )
+                        StatBlock(
+                            label = "Dystans m",
+                            value = "%.0f".format(Locale.US, distanceMeters)
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(
+                    modifier = Modifier.weight(1f),
+                    enabled = hasLocationPermission && idle,
+                    onClick = {
+                        when (startStrategy) {
+                            StartStrategy.CountdownThenMeasure -> {
+                                resetMeasurementBaselines()
+                                runPhase = RunPhase.Countdown
+                                countdownTick = 5
+                            }
+                            StartStrategy.ArmedWaitForMotion -> {
+                                armedAnchor = null
+                                lastArmedLocation = null
+                                resetMeasurementBaselines()
+                                runPhase = RunPhase.Armed
+                            }
+                        }
+                    }
+                ) {
+                    Text("Start")
+                }
+                OutlinedButton(
+                    modifier = Modifier.weight(1f),
+                    enabled = sessionActive,
+                    onClick = {
+                        val save = runPhase == RunPhase.Running
+                        handleSessionEnd.value.invoke(save)
+                    }
+                ) {
+                    Text("Stop")
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun MeasurePresetSelector(
+private fun StatBlock(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    valueStyle: TextStyle = MaterialTheme.typography.headlineSmall,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            label.uppercase(Locale.getDefault()),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(value, style = valueStyle)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MeasurePresetOptions(
     preset: MeasurePreset,
     onPresetChange: (MeasurePreset) -> Unit,
-    enabled: Boolean
+    enabled: Boolean,
 ) {
-    val isDistance = preset is MeasurePreset.Distance
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Rodzaj pomiaru", style = MaterialTheme.typography.titleSmall)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Button(
-                onClick = {
-                    onPresetChange(MeasurePreset.Distance(1000f, "1 km"))
-                },
-                modifier = Modifier.weight(1f),
-                enabled = enabled && !isDistance
-            ) {
-                Text("Dystans")
-            }
-            Button(
-                onClick = {
-                    onPresetChange(MeasurePreset.SpeedAccel(100f))
-                },
-                modifier = Modifier.weight(1f),
-                enabled = enabled && isDistance
-            ) {
-                Text("Przyspieszenie")
-            }
-        }
-
-        when (val p = preset) {
-            is MeasurePreset.Distance -> {
-                Text("Wybór dystansu", style = MaterialTheme.typography.titleSmall)
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        distanceOptions.take(2).forEach { opt ->
-                            DistanceOptionButton(
-                                option = opt,
-                                current = p,
-                                enabled = enabled,
-                                onSelect = onPresetChange,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
+    when (val p = preset) {
+        is MeasurePreset.Distance -> {
+            Text(
+                "Dystans",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    distanceOptions.take(2).forEach { opt ->
+                        DistanceFilterChip(
+                            option = opt,
+                            current = p,
+                            enabled = enabled,
+                            onSelect = onPresetChange,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        distanceOptions.drop(2).forEach { opt ->
-                            DistanceOptionButton(
-                                option = opt,
-                                current = p,
-                                enabled = enabled,
-                                onSelect = onPresetChange,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    distanceOptions.drop(2).forEach { opt ->
+                        DistanceFilterChip(
+                            option = opt,
+                            current = p,
+                            enabled = enabled,
+                            onSelect = onPresetChange,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                 }
             }
-            is MeasurePreset.SpeedAccel -> {
-                Text("Docelowa prędkość (0 → X)", style = MaterialTheme.typography.titleSmall)
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        speedTargetOptions.take(2).forEach { kmh ->
-                            SpeedTargetButton(
-                                targetKmh = kmh,
-                                current = p,
-                                enabled = enabled,
-                                onSelect = onPresetChange,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
+        }
+        is MeasurePreset.SpeedAccel -> {
+            Text(
+                "Próg prędkości",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    speedTargetOptions.take(2).forEach { kmh ->
+                        SpeedFilterChip(
+                            targetKmh = kmh,
+                            current = p,
+                            enabled = enabled,
+                            onSelect = onPresetChange,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        speedTargetOptions.drop(2).forEach { kmh ->
-                            SpeedTargetButton(
-                                targetKmh = kmh,
-                                current = p,
-                                enabled = enabled,
-                                onSelect = onPresetChange,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    speedTargetOptions.drop(2).forEach { kmh ->
+                        SpeedFilterChip(
+                            targetKmh = kmh,
+                            current = p,
+                            enabled = enabled,
+                            onSelect = onPresetChange,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                 }
             }
@@ -713,52 +847,49 @@ private fun MeasurePresetSelector(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DistanceOptionButton(
+private fun DistanceFilterChip(
     option: DistanceOption,
     current: MeasurePreset.Distance,
     enabled: Boolean,
     onSelect: (MeasurePreset) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val selected = current.label == option.label
-    Button(
+    FilterChip(
+        selected = selected,
         onClick = { onSelect(MeasurePreset.Distance(option.meters, option.label)) },
-        enabled = enabled && !selected,
+        enabled = enabled,
+        label = { Text(option.label) },
         modifier = modifier
-    ) {
-        Text(option.label)
-    }
+    )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SpeedTargetButton(
+private fun SpeedFilterChip(
     targetKmh: Float,
     current: MeasurePreset.SpeedAccel,
     enabled: Boolean,
     onSelect: (MeasurePreset) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val selected = current.targetKmh == targetKmh
-    Button(
+    FilterChip(
+        selected = selected,
         onClick = { onSelect(MeasurePreset.SpeedAccel(targetKmh)) },
-        enabled = enabled && !selected,
+        enabled = enabled,
+        label = { Text("${targetKmh.toInt()} km/h") },
         modifier = modifier
-    ) {
-        Text("${targetKmh.toInt()} km/h")
-    }
+    )
 }
 
-private fun measurePresetSummary(preset: MeasurePreset): String = when (preset) {
-    is MeasurePreset.Distance -> "Tryb: dystans — ${preset.label}"
-    is MeasurePreset.SpeedAccel -> "Tryb: przyspieszenie — 0–${preset.targetKmh.toInt()} km/h"
-}
-
-private fun autoStopGoalDescription(preset: MeasurePreset): String = when (preset) {
+private fun measureGoalLine(preset: MeasurePreset): String = when (preset) {
     is MeasurePreset.Distance ->
-        "Cel: ${preset.label} (${"%.1f".format(Locale.US, preset.meters)} m), auto-stop po dystansie"
+        "${preset.label} (${"%.0f".format(Locale.US, preset.meters)} m) · auto-stop po dystansie"
     is MeasurePreset.SpeedAccel ->
-        "Cel: ≥ ${preset.targetKmh.toInt()} km/h (auto-stop po prędkości)"
+        "0–${preset.targetKmh.toInt()} km/h · auto-stop po osiągnięciu prędkości"
 }
 
 private fun formatElapsedTime(ms: Long): String {
