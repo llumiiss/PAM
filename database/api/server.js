@@ -216,6 +216,45 @@ async function main() {
     });
   });
 
+  app.put("/api/auth/change-password", requireAuth, async (req, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body || {};
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ error: "currentPassword and newPassword required" });
+      }
+
+      const newPass = String(newPassword).trim();
+      if (newPass.length < 5 || !/^[a-zA-Z0-9]+$/.test(newPass)) {
+        return res.status(400).json({ error: "new password must be at least 5 chars (letters/digits)" });
+      }
+
+      const [rows] = await pool.execute(
+        `SELECT c.password_hash AS passwordHash
+         FROM user_credentials c
+         WHERE c.user_id = ?
+         LIMIT 1`,
+        [Number(req.user.sub)]
+      );
+      if (!rows.length) return res.status(404).json({ error: "credentials not found" });
+
+      const valid = await bcrypt.compare(String(currentPassword), rows[0].passwordHash);
+      if (!valid) return res.status(401).json({ error: "current password is invalid" });
+
+      const nextHash = await bcrypt.hash(newPass, 12);
+      await pool.execute(
+        `UPDATE user_credentials
+         SET password_hash = ?, password_plain = ?, password_algo = 'bcrypt', password_updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ?`,
+        [nextHash, newPass, Number(req.user.sub)]
+      );
+
+      return res.status(204).send();
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: String(e.message || e) });
+    }
+  });
+
   app.get("/api/admin/users", requireAdmin, async (_req, res) => {
     try {
       const [rows] = await pool.execute(
@@ -309,7 +348,7 @@ async function main() {
   /**
    * Body (camelCase):
    * clientRecordId, measuredAtEpochMs, measureType, modeLabel, startStrategy?,
-   * maxSpeedKmh, durationMs, distanceM, userId?, vehicleId?
+   * maxSpeedKmh, durationMs, distanceM, userId?
    */
   app.post("/api/attempts", optionalAuth, async (req, res) => {
     try {
@@ -323,7 +362,6 @@ async function main() {
         durationMs,
         distanceM,
         userId,
-        vehicleId,
       } = req.body || {};
 
       if (
@@ -346,12 +384,13 @@ async function main() {
       const resolvedUserId = req.user?.sub ? Number(req.user.sub) : (userId ?? null);
       const [result] = await pool.execute(
         `INSERT INTO measurement_attempts
-          (client_record_id, user_id, vehicle_id, measured_at, measure_type, mode_label, start_strategy, max_speed_kmh, duration_ms, distance_m)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (client_record_id, user_id, owner_username, measured_at_epoch_ms, measured_at, measure_type, mode_label, start_strategy, max_speed_kmh, duration_ms, distance_m)
+         VALUES (?, ?, (SELECT username FROM users WHERE id = ?), ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            id = LAST_INSERT_ID(id),
            user_id = VALUES(user_id),
-           vehicle_id = VALUES(vehicle_id),
+           owner_username = VALUES(owner_username),
+           measured_at_epoch_ms = VALUES(measured_at_epoch_ms),
            measured_at = VALUES(measured_at),
            measure_type = VALUES(measure_type),
            mode_label = VALUES(mode_label),
@@ -362,7 +401,8 @@ async function main() {
         [
           clientRecordId,
           resolvedUserId,
-          vehicleId ?? null,
+          resolvedUserId,
+          Number(measuredAtEpochMs),
           measuredAt,
           measureType,
           modeLabel,
@@ -371,11 +411,6 @@ async function main() {
           Number(durationMs),
           Number(distanceM),
         ]
-      );
-
-      await pool.execute(
-        `INSERT INTO sync_events (client_record_id, event_type, message) VALUES (?, 'insert', 'api upsert')`,
-        [clientRecordId]
       );
 
       res.status(201).json({ id: result.insertId });

@@ -37,12 +37,15 @@ PAM MySQL schema v2 - opis tabel
 - id: PK
 - client_record_id: unikalny UUID z aplikacji (idempotencja uploadu)
 - user_id: opcjonalny FK -> users.id
+- owner_username: snapshot nazwy uzytkownika z chwili pomiaru (czytelny podglad)
 - vehicle_id: opcjonalny FK -> vehicles.id
+- measured_at_epoch_ms: oryginalny czas UTC w ms (bez niejasnosci stref czasowych)
 - measured_at
 - measure_type: distance | speed_accel
 - mode_label: np. 1 km, 0-100 km/h
 - start_strategy: countdown_then_measure | armed_wait_for_motion
 - max_speed_kmh, duration_ms, distance_m
+- speed_profile_json: profil predkosci [[tMs,vKmh],...]
 - created_at, updated_at
 
 6) sync_events
@@ -53,13 +56,18 @@ PAM MySQL schema v2 - opis tabel
 - message
 - created_at
 
+7) vw_measurement_attempts_readable (VIEW)
+------------------------------------------
+- gotowy widok do prostego odczytu danych (owner_name, duration_s, pola czasowe)
+- laczy measurement_attempts + users dla bardziej czytelnego podgladu
+
 Przykladowe zapytania
 =====================
 
 -- Ostatnie proby:
-SELECT id, client_record_id, measured_at, measure_type, mode_label, duration_ms, distance_m
-FROM measurement_attempts
-ORDER BY measured_at DESC
+SELECT id, client_record_id, owner_name, measured_at, measure_type, mode_label, duration_ms, duration_s, distance_m
+FROM vw_measurement_attempts_readable
+ORDER BY measured_at_epoch_ms DESC
 LIMIT 20;
 
 -- Najlepsze czasy 0-100:

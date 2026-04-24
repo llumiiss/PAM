@@ -42,4 +42,15 @@ interface MeasurementDao {
 
     @Query("SELECT COUNT(*) FROM measurement_attempts WHERE sync_state IN ('pending', 'failed')")
     suspend fun countPendingSync(): Int
+
+    @Query(
+        """
+        DELETE FROM measurement_attempts
+        WHERE client_record_id IS NULL OR TRIM(client_record_id) = ''
+           OR measured_at_epoch_ms IS NULL OR measured_at_epoch_ms <= 0
+           OR measure_type IS NULL OR TRIM(measure_type) = ''
+           OR mode_label IS NULL OR TRIM(mode_label) = ''
+        """
+    )
+    suspend fun deleteCorruptedRows(): Int
 }

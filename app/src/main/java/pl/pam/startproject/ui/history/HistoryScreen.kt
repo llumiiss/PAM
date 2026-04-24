@@ -93,6 +93,11 @@ fun HistoryScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Historia", style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        if (isAdmin) "Tryb Admin" else "",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
                 }
 
                 Row(
@@ -152,7 +157,7 @@ fun HistoryScreen(
                     contentPadding = PaddingValues(bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(displayed, key = { it.id }) { row ->
+                    items(displayed, key = { "${it.id}_${it.clientRecordId}" }) { row ->
                         AttemptRow(
                             entity = row,
                             isAdmin = isAdmin,
