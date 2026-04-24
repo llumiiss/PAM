@@ -10,6 +10,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -22,25 +25,26 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.History
-//import androidx.compose.material.icons.filled.Logout
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -54,10 +58,15 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationCallback
@@ -74,6 +83,7 @@ import pl.pam.startproject.auth.SessionManager
 import pl.pam.startproject.auth.SessionUser
 import pl.pam.startproject.data.MeasureType
 import pl.pam.startproject.data.MeasurementAttemptEntity
+import pl.pam.startproject.data.MeasurementDao
 import pl.pam.startproject.data.PamDatabase
 import pl.pam.startproject.data.SpeedProfileCodec
 import pl.pam.startproject.gps.GpsSpeedEstimator
@@ -85,9 +95,13 @@ import pl.pam.startproject.ui.history.HistoryScreen
 import pl.pam.startproject.ui.leaderboard.LeaderboardScreen
 import pl.pam.startproject.ui.theme.StartProjectTheme
 import pl.pam.startproject.ui.theme.TimerFont
+import retrofit2.HttpException
+import java.io.IOException
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.max
+import org.json.JSONObject
+import kotlinx.coroutines.flow.Flow
 
 private val QUARTER_MILE_METERS = (1609.344 / 4.0).toFloat()
 
@@ -102,6 +116,79 @@ private const val SPEED_SAMPLE_MIN_INTERVAL_MS = 40L
 
 /** Górny limit punktów profilu prędkości na jedną próbę. */
 private const val SPEED_SAMPLE_MAX_POINTS = 450
+
+private enum class AuthAction { Login, Register, ChangePassword }
+
+private fun extractServerErrorMessage(raw: String?): String? {
+    if (raw.isNullOrBlank()) return null
+    val trimmed = raw.trim()
+    return runCatching {
+        val json = JSONObject(trimmed)
+        when {
+            json.has("message") -> json.optString("message")
+            json.has("error") -> json.optString("error")
+            else -> null
+        }
+    }.getOrNull() ?: trimmed
+}
+
+private fun mapAuthError(throwable: Throwable, action: AuthAction): String {
+    if (throwable is IOException) {
+        return "Brak połączenia z internetem. Sprawdź sieć i spróbuj ponownie."
+    }
+    if (throwable is HttpException) {
+        val status = throwable.code()
+        val serverMessage = extractServerErrorMessage(throwable.response()?.errorBody()?.string())
+        val normalized = serverMessage?.lowercase(Locale.getDefault()).orEmpty()
+        if (action == AuthAction.Register && (status == 409 || normalized.contains("already exists"))) {
+            return "Ten użytkownik już istnieje, dlatego nie można zarejestrować tego konta."
+        }
+        return when (action) {
+            AuthAction.Login -> when (status) {
+                400, 401 -> "Nieprawidłowy login lub hasło."
+                429 -> "Za dużo prób logowania. Odczekaj chwilę i spróbuj ponownie."
+                500, 502, 503 -> "Błąd serwera podczas logowania. Spróbuj ponownie za chwilę."
+                else -> serverMessage ?: "Nie udało się zalogować. Spróbuj ponownie."
+            }
+            AuthAction.Register -> when (status) {
+                400 -> "Dane rejestracji są niepoprawne. Sprawdź pola formularza."
+                429 -> "Za dużo prób rejestracji. Odczekaj chwilę i spróbuj ponownie."
+                500, 502, 503 -> "Błąd serwera podczas rejestracji. Spróbuj ponownie za chwilę."
+                else -> serverMessage ?: "Nie udało się zarejestrować konta."
+            }
+            AuthAction.ChangePassword -> when (status) {
+                400 -> "Nowe hasło jest niepoprawne. Upewnij się, że spełnia wymagania."
+                401, 403 -> "Stare hasło jest nieprawidłowe."
+                429 -> "Za dużo prób zmiany hasła. Odczekaj chwilę i spróbuj ponownie."
+                500, 502, 503 -> "Błąd serwera przy zmianie hasła. Spróbuj ponownie za chwilę."
+                else -> serverMessage ?: "Nie udało się zmienić hasła."
+            }
+        }
+    }
+    return when (action) {
+        AuthAction.Login -> throwable.message ?: "Wystąpił nieoczekiwany błąd logowania."
+        AuthAction.Register -> throwable.message ?: "Wystąpił nieoczekiwany błąd rejestracji."
+        AuthAction.ChangePassword -> throwable.message ?: "Wystąpił nieoczekiwany błąd zmiany hasła."
+    }
+}
+
+private fun passwordValid(password: String): Boolean {
+    val p = password.trim()
+    return p.length >= 5 && p.all { it.isLetterOrDigit() }
+}
+
+@Composable
+private fun rememberHistoryFlow(
+    measurementDao: MeasurementDao,
+    sessionUser: SessionUser?,
+): Flow<List<MeasurementAttemptEntity>> {
+    val userId = sessionUser?.id
+    val isAdmin = sessionUser?.isAdmin == true
+    return remember(measurementDao, userId, isAdmin) {
+        if (isAdmin) measurementDao.observeAllByDateDesc()
+        else measurementDao.observeByOwnerByDateDesc(userId ?: -1L)
+    }
+}
 
 private fun appendSpeedSample(
     samples: ArrayList<Pair<Long, Float>>,
@@ -147,7 +234,7 @@ private sealed class MeasurePreset {
     data class SpeedAccel(val targetKmh: Float) : MeasurePreset()
 }
 
-private enum class AppScreen { Auth, Measure, History, Leaderboard, Admin }
+private enum class AppScreen { Auth, Measure, History, Account, Leaderboard, Admin }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -162,10 +249,12 @@ class MainActivity : ComponentActivity() {
             val authRepository = remember { AuthRepository(this) }
             val leaderboardRepository = remember { LeaderboardRepository(this) }
             val adminRepository = remember { AdminRepository(this) }
-            val attemptsFlow = remember { database.measurementDao().observeAllByDateDesc() }
+            val measurementDao = remember { database.measurementDao() }
             var sessionUser by remember { mutableStateOf<SessionUser?>(sessionManager.getUser()) }
+            val attemptsFlow = rememberHistoryFlow(measurementDao, sessionUser)
             var authLoading by remember { mutableStateOf(false) }
             var authError by remember { mutableStateOf<String?>(null) }
+            var showLaunchScreen by remember { mutableStateOf(true) }
             var appScreen by remember {
                 mutableStateOf(if (sessionManager.getToken() != null) AppScreen.Measure else AppScreen.Auth)
             }
@@ -175,84 +264,120 @@ class MainActivity : ComponentActivity() {
                 appScreen = AppScreen.Auth
             }
             StartProjectTheme {
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ) { innerPadding ->
-                    when (appScreen) {
-                        AppScreen.Auth -> AuthScreen(
-                            modifier = Modifier.padding(innerPadding),
-                            isLoading = authLoading,
-                            errorMessage = authError,
-                            onLogin = { emailOrUsername, password ->
-                                scope.launch {
-                                    authLoading = true
-                                    authError = null
-                                    runCatching { authRepository.login(emailOrUsername, password) }
-                                        .onSuccess {
-                                            sessionUser = it
-                                            appScreen = AppScreen.Measure
-                                            syncRepository.enqueueSyncNow()
-                                        }
-                                        .onFailure { authError = it.message ?: "Błąd logowania" }
-                                    authLoading = false
-                                }
-                            },
-                            onRegister = { username, email, password ->
-                                scope.launch {
-                                    authLoading = true
-                                    authError = null
-                                    runCatching { authRepository.register(username, email, password) }
-                                        .onSuccess {
-                                            sessionUser = it
-                                            appScreen = AppScreen.Measure
-                                            syncRepository.enqueueSyncNow()
-                                        }
-                                        .onFailure { authError = it.message ?: "Błąd rejestracji" }
-                                    authLoading = false
+                if (showLaunchScreen) {
+                    LaunchImageScreen(onFinished = { showLaunchScreen = false })
+                } else {
+                    Scaffold(
+                        modifier = Modifier.fillMaxSize(),
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        bottomBar = {
+                            if (appScreen != AppScreen.Auth && appScreen != AppScreen.Admin) {
+                                NavigationBar {
+                                    NavigationBarItem(
+                                        selected = appScreen == AppScreen.Measure,
+                                        onClick = { appScreen = AppScreen.Measure },
+                                        icon = { Icon(Icons.Filled.Speed, contentDescription = null) },
+                                        label = { Text("Pomiar") }
+                                    )
+                                    NavigationBarItem(
+                                        selected = appScreen == AppScreen.History,
+                                        onClick = { appScreen = AppScreen.History },
+                                        icon = { Icon(Icons.Filled.History, contentDescription = null) },
+                                        label = { Text("Historia") }
+                                    )
+                                    NavigationBarItem(
+                                        selected = appScreen == AppScreen.Account,
+                                        onClick = { appScreen = AppScreen.Account },
+                                        icon = { Icon(Icons.Filled.AccountCircle, contentDescription = null) },
+                                        label = { Text("Konto") }
+                                    )
+                                    NavigationBarItem(
+                                        selected = appScreen == AppScreen.Leaderboard,
+                                        onClick = { appScreen = AppScreen.Leaderboard },
+                                        icon = { Icon(Icons.Filled.EmojiEvents, contentDescription = null) },
+                                        label = { Text("Ranking") }
+                                    )
                                 }
                             }
-                        )
-                        AppScreen.Measure -> DragMeasureScreen(
-                            modifier = Modifier.padding(innerPadding),
-                            onOpenHistory = { appScreen = AppScreen.History },
-                            onOpenLeaderboard = { appScreen = AppScreen.Leaderboard },
-                            onOpenAdmin = {
-                                if (sessionUser?.isAdmin == true) appScreen = AppScreen.Admin
-                            },
-                            onLogout = performLogout,
-                            sessionUser = sessionUser
-                        )
-                        AppScreen.History -> HistoryScreen(
-                            modifier = Modifier.padding(innerPadding),
-                            attemptsFlow = attemptsFlow,
-                            onBackToMeasure = { appScreen = AppScreen.Measure }
-                        )
-                        AppScreen.Leaderboard -> LeaderboardScreen(
-                            modifier = Modifier.padding(innerPadding),
-                            repository = leaderboardRepository,
-                            isAdmin = sessionUser?.isAdmin == true,
-                            onDeleteAttempt = { attemptId ->
-                                val token = sessionManager.getToken()
-                                if (token != null) {
-                                    adminRepository.deleteAttempt(token, attemptId)
+                        }
+                    ) { innerPadding ->
+                        when (appScreen) {
+                            AppScreen.Auth -> AuthScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                isLoading = authLoading,
+                                errorMessage = authError,
+                                onLogin = { emailOrUsername, password ->
+                                    scope.launch {
+                                        authLoading = true
+                                        authError = null
+                                        runCatching { authRepository.login(emailOrUsername, password) }
+                                            .onSuccess {
+                                                sessionUser = it
+                                                appScreen = AppScreen.Measure
+                                                syncRepository.enqueueSyncNow()
+                                            }
+                                            .onFailure { authError = mapAuthError(it, AuthAction.Login) }
+                                        authLoading = false
+                                    }
+                                },
+                                onRegister = { username, email, password ->
+                                    scope.launch {
+                                        authLoading = true
+                                        authError = null
+                                        runCatching { authRepository.register(username, email, password) }
+                                            .onSuccess {
+                                                sessionUser = it
+                                                appScreen = AppScreen.Measure
+                                                syncRepository.enqueueSyncNow()
+                                            }
+                                            .onFailure { authError = mapAuthError(it, AuthAction.Register) }
+                                        authLoading = false
+                                    }
                                 }
-                            },
-                            onBack = { appScreen = AppScreen.Measure }
-                        )
-                        AppScreen.Admin -> {
-                            val token = sessionManager.getToken()
-                            val user = sessionUser
-                            if (token == null || user == null || !user.isAdmin) {
-                                appScreen = AppScreen.Measure
-                            } else {
-                                AdminScreen(
-                                    modifier = Modifier.padding(innerPadding),
-                                    repository = adminRepository,
-                                    authToken = token,
-                                    currentUserId = user.id,
-                                    onBack = { appScreen = AppScreen.Measure }
-                                )
+                            )
+                            AppScreen.Measure -> DragMeasureScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                sessionUser = sessionUser
+                            )
+                            AppScreen.History -> HistoryScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                attemptsFlow = attemptsFlow,
+                                isAdmin = sessionUser?.isAdmin == true
+                            )
+                            AppScreen.Account -> AccountScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                sessionUser = sessionUser,
+                                authRepository = authRepository,
+                                onOpenAdmin = {
+                                    if (sessionUser?.isAdmin == true) appScreen = AppScreen.Admin
+                                },
+                                onLogout = performLogout
+                            )
+                            AppScreen.Leaderboard -> LeaderboardScreen(
+                                modifier = Modifier.padding(innerPadding),
+                                repository = leaderboardRepository,
+                                isAdmin = sessionUser?.isAdmin == true,
+                                onDeleteAttempt = { attemptId ->
+                                    val token = sessionManager.getToken()
+                                    if (token != null) {
+                                        adminRepository.deleteAttempt(token, attemptId)
+                                    }
+                                }
+                            )
+                            AppScreen.Admin -> {
+                                val token = sessionManager.getToken()
+                                val user = sessionUser
+                                if (token == null || user == null || !user.isAdmin) {
+                                    appScreen = AppScreen.Measure
+                                } else {
+                                    AdminScreen(
+                                        modifier = Modifier.padding(innerPadding),
+                                        repository = adminRepository,
+                                        authToken = token,
+                                        currentUserId = user.id,
+                                        onBack = { appScreen = AppScreen.Measure }
+                                    )
+                                }
                             }
                         }
                     }
@@ -262,15 +387,41 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@Composable
+private fun LaunchImageScreen(
+    onFinished: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var visible by remember { mutableStateOf(false) }
+    val alpha by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(durationMillis = 500),
+        label = "launchAlpha"
+    )
+    LaunchedEffect(Unit) {
+        visible = true
+        delay(1500L)
+        visible = false
+        delay(500L)
+        onFinished()
+    }
+    Box(modifier = modifier.fillMaxSize()) {
+        Image(
+            painter = painterResource(id = R.drawable.launch_car),
+            contentDescription = "Ekran startowy",
+            modifier = Modifier
+                .fillMaxSize()
+                .alpha(alpha),
+            contentScale = ContentScale.Crop
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("MissingPermission")
 @Composable
 private fun DragMeasureScreen(
     modifier: Modifier = Modifier,
-    onOpenHistory: () -> Unit,
-    onOpenLeaderboard: () -> Unit,
-    onOpenAdmin: () -> Unit,
-    onLogout: () -> Unit,
     sessionUser: SessionUser?,
 ) {
     val context = LocalContext.current
@@ -346,6 +497,8 @@ private fun DragMeasureScreen(
                     durationMs = snapElapsed,
                     distanceM = snapDist.toDouble(),
                     speedProfileJson = SpeedProfileCodec.encode(snapSpeedProfile),
+                    ownerUserId = sessionUser?.id,
+                    ownerUsername = sessionUser?.username,
                 )
                 syncRepository.insertPendingAndSync(row)
             }
@@ -473,73 +626,16 @@ private fun DragMeasureScreen(
 
     val sessionActive = runPhase != RunPhase.Idle
     val idle = runPhase == RunPhase.Idle
-    var menuExpanded by remember { mutableStateOf(false) }
-
     Column(modifier = modifier.fillMaxSize()) {
         CenterAlignedTopAppBar(
             title = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Pomiar", style = MaterialTheme.typography.titleLarge)
+                    Text("Draggy", style = MaterialTheme.typography.titleLarge)
                     Text(
                         sessionUser?.username ?: "Offline",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
-            },
-            actions = {
-                Box {
-                    IconButton(onClick = { menuExpanded = true }) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = "Menu")
-                    }
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Historia") },
-                            onClick = {
-                                menuExpanded = false
-                                onOpenHistory()
-                            },
-                            leadingIcon = {
-                                Icon(Icons.Filled.History, contentDescription = null)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Ranking") },
-                            onClick = {
-                                menuExpanded = false
-                                onOpenLeaderboard()
-                            },
-                            leadingIcon = {
-                                Icon(Icons.Filled.EmojiEvents, contentDescription = null)
-                            }
-                        )
-                        if (sessionUser?.isAdmin == true) {
-                            DropdownMenuItem(
-                                text = { Text("Admin") },
-                                onClick = {
-                                    menuExpanded = false
-                                    onOpenAdmin()
-                                },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.Settings, contentDescription = null)
-                                }
-                            )
-                        }
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Wyloguj") },
-                            onClick = {
-                                menuExpanded = false
-                                onLogout()
-                            },
-                            leadingIcon = {
-                                Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
-                            }
-                        )
-                    }
                 }
             }
         )
@@ -741,6 +837,183 @@ private fun DragMeasureScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AccountScreen(
+    modifier: Modifier = Modifier,
+    sessionUser: SessionUser?,
+    authRepository: AuthRepository,
+    onOpenAdmin: () -> Unit,
+    onLogout: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var currentPassword by remember { mutableStateOf("") }
+    var newPassword by remember { mutableStateOf("") }
+    var currentPasswordVisible by remember { mutableStateOf(false) }
+    var newPasswordVisible by remember { mutableStateOf(false) }
+    var isSaving by remember { mutableStateOf(false) }
+    var changePasswordError by remember { mutableStateOf<String?>(null) }
+    var changePasswordSuccess by remember { mutableStateOf<String?>(null) }
+    val newPasswordOk = passwordValid(newPassword)
+    val canChangePassword = currentPassword.isNotBlank() && newPasswordOk
+
+    Column(modifier = modifier.fillMaxSize()) {
+        CenterAlignedTopAppBar(
+            title = { Text("Konto", style = MaterialTheme.typography.titleLarge) }
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Użytkownik", style = MaterialTheme.typography.titleMedium)
+                    Text(sessionUser?.username ?: "-", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        sessionUser?.email ?: "-",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Zmiana hasła", style = MaterialTheme.typography.titleMedium)
+                    OutlinedTextField(
+                        value = currentPassword,
+                        onValueChange = {
+                            currentPassword = it
+                            changePasswordError = null
+                            changePasswordSuccess = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Stare hasło") },
+                        singleLine = true,
+                        visualTransformation = if (currentPasswordVisible) {
+                            VisualTransformation.None
+                        } else {
+                            PasswordVisualTransformation()
+                        },
+                        trailingIcon = {
+                            TextButton(onClick = { currentPasswordVisible = !currentPasswordVisible }) {
+                                Text(if (currentPasswordVisible) "Ukryj" else "Pokaż")
+                            }
+                        }
+                    )
+                    OutlinedTextField(
+                        value = newPassword,
+                        onValueChange = {
+                            newPassword = it
+                            changePasswordError = null
+                            changePasswordSuccess = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Nowe hasło") },
+                        singleLine = true,
+                        isError = newPassword.isNotBlank() && !newPasswordOk,
+                        visualTransformation = if (newPasswordVisible) {
+                            VisualTransformation.None
+                        } else {
+                            PasswordVisualTransformation()
+                        },
+                        supportingText = {
+                            Text(
+                                when {
+                                    newPassword.isBlank() -> "Min. 5 znaków: tylko litery lub cyfry"
+                                    !newPasswordOk -> "Hasło musi mieć min. 5 znaków (litery/cyfry)"
+                                    else -> "OK"
+                                },
+                                color = when {
+                                    newPassword.isBlank() -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    !newPasswordOk -> MaterialTheme.colorScheme.error
+                                    else -> MaterialTheme.colorScheme.primary
+                                },
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        },
+                        trailingIcon = {
+                            TextButton(onClick = { newPasswordVisible = !newPasswordVisible }) {
+                                Text(if (newPasswordVisible) "Ukryj" else "Pokaż")
+                            }
+                        }
+                    )
+                    changePasswordError?.let {
+                        Text(
+                            it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    changePasswordSuccess?.let {
+                        Text(
+                            it,
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = canChangePassword && !isSaving,
+                        onClick = {
+                            if (!newPasswordOk) {
+                                changePasswordError = "Nowe hasło musi mieć min. 5 znaków (litery/cyfry)."
+                                return@Button
+                            }
+                            scope.launch {
+                                isSaving = true
+                                changePasswordError = null
+                                changePasswordSuccess = null
+                                runCatching {
+                                    authRepository.changePassword(
+                                        currentPassword = currentPassword,
+                                        newPassword = newPassword
+                                    )
+                                }
+                                    .onSuccess {
+                                        currentPassword = ""
+                                        newPassword = ""
+                                        changePasswordSuccess = "Hasło zostało zmienione."
+                                    }
+                                    .onFailure {
+                                        changePasswordError = mapAuthError(it, AuthAction.ChangePassword)
+                                    }
+                                isSaving = false
+                            }
+                        }
+                    ) {
+                        Text(if (isSaving) "Zmieniam…" else "Zmień hasło")
+                    }
+                }
+            }
+            if (sessionUser?.isAdmin == true) {
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onOpenAdmin
+                ) {
+                    Icon(Icons.Filled.Settings, contentDescription = null)
+                    Text("Panel admina", modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onLogout
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
+                Text("Wyloguj", modifier = Modifier.padding(start = 8.dp))
+            }
+        }
+    }
+}
+
 @Composable
 private fun StatBlock(
     label: String,
@@ -905,10 +1178,6 @@ private fun formatElapsedTime(ms: Long): String {
 private fun DragMeasurePreview() {
     StartProjectTheme {
         DragMeasureScreen(
-            onOpenHistory = {},
-            onOpenLeaderboard = {},
-            onOpenAdmin = {},
-            onLogout = {},
             sessionUser = SessionUser(id = 1, username = "demo", email = "demo@example.com", displayName = "Demo", role = "user")
         )
     }

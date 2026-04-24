@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -35,7 +34,6 @@ fun LeaderboardScreen(
     repository: LeaderboardRepository,
     isAdmin: Boolean,
     onDeleteAttempt: suspend (Long) -> Unit,
-    onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var loading by remember { mutableStateOf(false) }
@@ -74,9 +72,6 @@ fun LeaderboardScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = { scope.launch { load() } }, enabled = !loading) {
                         Text(if (loading) "…" else "Odśwież")
-                    }
-                    FilledTonalButton(onClick = onBack) {
-                        Text("Pomiar")
                     }
                 }
             }

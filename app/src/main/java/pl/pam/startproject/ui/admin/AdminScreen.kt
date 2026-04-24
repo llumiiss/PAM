@@ -71,7 +71,7 @@ fun AdminScreen(
                         Text(if (loading) "…" else "Odśwież")
                     }
                     FilledTonalButton(onClick = onBack) {
-                        Text("Pomiar")
+                        Text("Draggy")
                     }
                 }
             }

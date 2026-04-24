@@ -50,6 +50,17 @@ class AuthRepository(context: Context) {
         user
     }
 
+    suspend fun changePassword(currentPassword: String, newPassword: String) = withContext(Dispatchers.IO) {
+        val token = sessionManager.getToken() ?: error("Brak aktywnej sesji")
+        api.changePassword(
+            authorization = "Bearer $token",
+            body = ChangePasswordRequestDto(
+                currentPassword = currentPassword,
+                newPassword = newPassword
+            )
+        )
+    }
+
     private fun AuthUserDto.toSessionUser() = SessionUser(
         id = id,
         username = username,
