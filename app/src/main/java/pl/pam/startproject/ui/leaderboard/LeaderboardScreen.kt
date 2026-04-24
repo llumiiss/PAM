@@ -9,10 +9,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -20,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -55,55 +58,85 @@ fun LeaderboardScreen(
 
     LaunchedEffect(Unit) { load() }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onBack) { Text("Pomiar") }
-            Button(onClick = { scope.launch { load() } }, enabled = !loading) { Text("Odśwież") }
-        }
-
-        Text("Ranking globalny", style = MaterialTheme.typography.headlineSmall)
-        if (loading) Text("Ładowanie...")
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item { Text("Najlepszy czas — 1 km", style = MaterialTheme.typography.titleMedium) }
-            itemsIndexed(top1km, key = { _, row -> "1km-${row.id}" }) { index, row ->
-                LeaderboardRow(
-                    position = index + 1,
-                    row = row,
-                    isAdmin = isAdmin,
-                    onDelete = {
-                        scope.launch {
-                            runCatching { onDeleteAttempt(row.id) }
-                                .onSuccess { load() }
-                                .onFailure { error = it.message ?: "Nie udało się usunąć rekordu" }
-                        }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Ranking", style = MaterialTheme.typography.headlineSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { scope.launch { load() } }, enabled = !loading) {
+                        Text(if (loading) "…" else "Odśwież")
                     }
-                )
+                    FilledTonalButton(onClick = onBack) {
+                        Text("Pomiar")
+                    }
+                }
             }
-            item { Text("Najlepszy czas — 0–100 km/h", style = MaterialTheme.typography.titleMedium) }
-            itemsIndexed(top0100, key = { _, row -> "0100-${row.id}" }) { index, row ->
-                LeaderboardRow(
-                    position = index + 1,
-                    row = row,
-                    isAdmin = isAdmin,
-                    onDelete = {
-                        scope.launch {
-                            runCatching { onDeleteAttempt(row.id) }
-                                .onSuccess { load() }
-                                .onFailure { error = it.message ?: "Nie udało się usunąć rekordu" }
+
+            if (loading) {
+                Text("Ładowanie…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            error?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item {
+                    Text(
+                        "1 km (dystans)",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
+                itemsIndexed(top1km, key = { _, row -> "1km-${row.id}" }) { index, row ->
+                    LeaderboardRow(
+                        position = index + 1,
+                        row = row,
+                        isAdmin = isAdmin,
+                        onDelete = {
+                            scope.launch {
+                                runCatching { onDeleteAttempt(row.id) }
+                                    .onSuccess { load() }
+                                    .onFailure { e -> error = e.message ?: "Nie udało się usunąć rekordu" }
+                            }
                         }
-                    }
-                )
+                    )
+                }
+                item {
+                    Text(
+                        "0–100 km/h",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                    )
+                }
+                itemsIndexed(top0100, key = { _, row -> "0100-${row.id}" }) { index, row ->
+                    LeaderboardRow(
+                        position = index + 1,
+                        row = row,
+                        isAdmin = isAdmin,
+                        onDelete = {
+                            scope.launch {
+                                runCatching { onDeleteAttempt(row.id) }
+                                    .onSuccess { load() }
+                                    .onFailure { e -> error = e.message ?: "Nie udało się usunąć rekordu" }
+                            }
+                        }
+                    )
+                }
             }
         }
     }
@@ -116,19 +149,34 @@ private fun LeaderboardRow(
     isAdmin: Boolean,
     onDelete: () -> Unit
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "#$position · ${row.username ?: "anon"}",
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
             Text(
-                "#$position ${row.username ?: "anon"}",
-                style = MaterialTheme.typography.titleSmall
+                row.modeLabel,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Text(row.modeLabel)
             Text(
-                "Czas: ${formatDuration(row.durationMs)} · Vmax: ${"%.1f".format(Locale.US, row.maxSpeedKmh)} km/h",
-                style = MaterialTheme.typography.bodySmall
+                "${formatDuration(row.durationMs)} · ${"%.0f".format(Locale.US, row.maxSpeedKmh)} km/h",
+                style = MaterialTheme.typography.bodyMedium
             )
             if (isAdmin) {
-                Button(onClick = onDelete) { Text("Usuń rekord") }
+                TextButton(onClick = onDelete) {
+                    Text("Usuń", color = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }

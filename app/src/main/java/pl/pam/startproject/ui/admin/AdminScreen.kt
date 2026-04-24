@@ -9,9 +9,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,62 +53,102 @@ fun AdminScreen(
 
     LaunchedEffect(Unit) { reload() }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onBack) { Text("Pomiar") }
-            Button(onClick = { scope.launch { reload() } }, enabled = !loading) { Text("Odśwież") }
-        }
-        Text("Panel administratora", style = MaterialTheme.typography.headlineSmall)
-        if (loading) Text("Ładowanie...")
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(users, key = { it.id }) { user ->
-                var passwordRevealed by remember(user.id) { mutableStateOf(false) }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("${user.username} (${user.role})", style = MaterialTheme.typography.titleMedium)
-                        Text("Email: ${user.email}")
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Admin", style = MaterialTheme.typography.headlineSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { scope.launch { reload() } }, enabled = !loading) {
+                        Text(if (loading) "…" else "Odśwież")
+                    }
+                    FilledTonalButton(onClick = onBack) {
+                        Text("Pomiar")
+                    }
+                }
+            }
+
+            if (loading) {
+                Text("Ładowanie…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(users, key = { it.id }) { user ->
+                    var passwordRevealed by remember(user.id) { mutableStateOf(false) }
+                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                if (passwordRevealed) {
-                                    "Hasło: ${user.passwordPlain ?: "— (brak zapisu jawnym tekstem)"}"
-                                } else {
-                                    "Hasło: ••••••••"
-                                },
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            TextButton(onClick = { passwordRevealed = !passwordRevealed }) {
-                                Text(if (passwordRevealed) "Ukryj" else "Pokaż")
-                            }
-                        }
-                        Text("Prób: ${user.attemptsCount}")
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            val canDelete = user.id != currentUserId
-                            Button(
-                                onClick = {
-                                    scope.launch {
-                                        runCatching { repository.deleteUser(authToken, user.id) }
-                                            .onSuccess { reload() }
-                                            .onFailure { error = it.message ?: "Nie udało się usunąć użytkownika" }
-                                    }
-                                },
-                                enabled = canDelete && !loading
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Usuń użytkownika")
+                                Text(
+                                    user.username,
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    user.role,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Text(
+                                user.email,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    if (passwordRevealed) {
+                                        "Hasło: ${user.passwordPlain ?: "—"}"
+                                    } else {
+                                        "Hasło: ••••••"
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = { passwordRevealed = !passwordRevealed }) {
+                                    Text(if (passwordRevealed) "Ukryj" else "Pokaż")
+                                }
+                            }
+                            Text(
+                                "Próby: ${user.attemptsCount}",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            val canDelete = user.id != currentUserId
+                            if (canDelete) {
+                                TextButton(
+                                    onClick = {
+                                        scope.launch {
+                                            runCatching { repository.deleteUser(authToken, user.id) }
+                                                .onSuccess { reload() }
+                                                .onFailure { error = it.message ?: "Nie udało się usunąć" }
+                                        }
+                                    },
+                                    enabled = !loading
+                                ) {
+                                    Text("Usuń konto", color = MaterialTheme.colorScheme.error)
+                                }
                             }
                         }
                     }

@@ -1,6 +1,7 @@
 package pl.pam.startproject.ui.history
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,17 +9,21 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -75,77 +80,98 @@ fun HistoryScreen(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Historia prób", style = MaterialTheme.typography.headlineSmall)
-            Button(onClick = onBackToMeasure) { Text("Pomiar") }
-        }
+    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Historia", style = MaterialTheme.typography.headlineSmall)
+                    FilledTonalButton(onClick = onBackToMeasure) {
+                        Text("Pomiar")
+                    }
+                }
 
-        Text("Typ pomiaru", style = MaterialTheme.typography.titleSmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = filter == HistoryFilter.All,
-                onClick = { filter = HistoryFilter.All },
-                label = { Text("Wszystkie") }
-            )
-            FilterChip(
-                selected = filter == HistoryFilter.Distance,
-                onClick = { filter = HistoryFilter.Distance },
-                label = { Text("Dystans") }
-            )
-            FilterChip(
-                selected = filter == HistoryFilter.SpeedAccel,
-                onClick = { filter = HistoryFilter.SpeedAccel },
-                label = { Text("Przyspieszenie") }
-            )
-        }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Typ",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(end = 4.dp)
+                    )
+                    FilterChip(
+                        selected = filter == HistoryFilter.All,
+                        onClick = { filter = HistoryFilter.All },
+                        label = { Text("Wszystkie") }
+                    )
+                    FilterChip(
+                        selected = filter == HistoryFilter.Distance,
+                        onClick = { filter = HistoryFilter.Distance },
+                        label = { Text("Dystans") }
+                    )
+                    FilterChip(
+                        selected = filter == HistoryFilter.SpeedAccel,
+                        onClick = { filter = HistoryFilter.SpeedAccel },
+                        label = { Text("0→V") }
+                    )
+                    VerticalDivider(
+                        modifier = Modifier.height(28.dp),
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+                    )
+                    Text(
+                        "Sort.",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(end = 4.dp)
+                    )
+                    FilterChip(
+                        selected = sort == HistorySort.DateNewest,
+                        onClick = { sort = HistorySort.DateNewest },
+                        label = { Text("Data") }
+                    )
+                    FilterChip(
+                        selected = sort == HistorySort.BestTime,
+                        onClick = { sort = HistorySort.BestTime },
+                        label = { Text("Czas") }
+                    )
+                }
 
-        Text("Sortowanie", style = MaterialTheme.typography.titleSmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = sort == HistorySort.DateNewest,
-                onClick = { sort = HistorySort.DateNewest },
-                label = { Text("Data") }
-            )
-            FilterChip(
-                selected = sort == HistorySort.BestTime,
-                onClick = { sort = HistorySort.BestTime },
-                label = { Text("Najlepszy czas") }
-            )
-        }
-
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentPadding = PaddingValues(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(displayed, key = { it.id }) { row ->
-                AttemptRow(
-                    entity = row,
-                    onOpenDetail = { detailAttempt = row }
-                )
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentPadding = PaddingValues(bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(displayed, key = { it.id }) { row ->
+                        AttemptRow(
+                            entity = row,
+                            onOpenDetail = { detailAttempt = row }
+                        )
+                    }
+                }
             }
-        }
-        }
 
-        detailAttempt?.let { picked ->
-            ModalBottomSheet(onDismissRequest = { detailAttempt = null }) {
-                AttemptDetailSheetContent(
-                    entity = picked,
-                    onClose = { detailAttempt = null }
-                )
+            detailAttempt?.let { picked ->
+                ModalBottomSheet(onDismissRequest = { detailAttempt = null }) {
+                    AttemptDetailSheetContent(
+                        entity = picked,
+                        onClose = { detailAttempt = null }
+                    )
+                }
             }
         }
     }
@@ -164,23 +190,43 @@ private fun AttemptRow(
         MeasureType.SPEED_ACCEL -> "Przyspieszenie"
         else -> entity.measureType
     }
-    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenDetail)) {
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpenDetail)
+    ) {
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Text("$dateStr · $typeLabel", style = MaterialTheme.typography.labelMedium)
-            Text(entity.modeLabel, style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Czas: ${formatDuration(entity.durationMs)} · Dystans: ${"%.1f".format(Locale.US, entity.distanceM)} m · Vmax: ${"%.1f".format(Locale.US, entity.maxSpeedKmh)} km/h",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            entity.startStrategy?.let {
-                Text("Start: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    entity.modeLabel,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    typeLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
             Text(
-                "Dotknij, aby zobaczyć wykres i statystyki",
-                style = MaterialTheme.typography.labelSmall,
+                dateStr,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "${formatDuration(entity.durationMs)} · ${"%.0f".format(Locale.US, entity.distanceM)} m · ${"%.0f".format(Locale.US, entity.maxSpeedKmh)} km/h",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                "Szczegóły ›",
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary
             )
         }
