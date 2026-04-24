@@ -6,7 +6,9 @@
         <item name="postSplashScreenTheme">@style/Theme.StartProject.Base</item>
     </style>
 
-    <style name="Theme.StartProject.Base" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.StartProject.Base" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
         <item name="android:windowBackground">@drawable/launch_car</item>
     </style>
 </resources>
